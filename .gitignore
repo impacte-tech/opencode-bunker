@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+.bun/
+.pnp.*
+
+# build output
+dist/
+*.tsbuildinfo
+
+# local audit logs / runtime state (the committed proof log lives in
+# .planning/proof/audit.jsonl and is intentionally tracked)
+logs/
+.bunker/
+
+# logs
+*.log
+
+# env / secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
