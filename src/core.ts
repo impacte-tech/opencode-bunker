@@ -77,6 +77,7 @@ export interface BunkerConfig {
     headMaxLen: number
     timeoutMs: number
     intraOpNumThreads: number
+    useGpu: boolean
   }
 }
 
@@ -186,6 +187,7 @@ const DEFAULT_CONFIG: BunkerConfig = {
     headMaxLen: 256,
     timeoutMs: 120_000,
     intraOpNumThreads: 4,
+    useGpu: true,
   },
 }
 
@@ -497,6 +499,7 @@ async function getModelProvider(): Promise<ModelProvider | null> {
           maxLen: config.classifier.maxLen,
           headMaxLen: config.classifier.headMaxLen,
           intraOpNumThreads: config.classifier.intraOpNumThreads,
+          useGpu: config.classifier.useGpu,
           questions: MODEL_QUESTIONS,
         })
       } catch {

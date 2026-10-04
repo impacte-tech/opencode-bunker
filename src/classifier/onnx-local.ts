@@ -43,6 +43,8 @@ export interface OnnxLocalOptions {
   questions: Record<string, OnnxQuestion>
   /** ONNX Runtime intra-op threads (default 1). */
   intraOpNumThreads?: number
+  /** Try the CUDA execution provider first, falling back to CPU (default true). */
+  useGpu?: boolean
   /** Optional progress callback. */
   onProgress?: (message: string) => void
 }
@@ -197,10 +199,25 @@ export async function createOnnxLocalProvider(
     ;(tokenizer as any).cls_token_id =
       (tokenizer as any).bos_token_id ?? encCfg.cls_token_id ?? 50281
   }
-  const session = await ort.InferenceSession.create(onnxPath, {
+  const sessionOptions = {
     intraOpNumThreads: options.intraOpNumThreads ?? 4,
     interOpNumThreads: 1,
-  })
+  }
+  const providers = options.useGpu === false ? ["cpu"] : ["cuda", "cpu"]
+  let session: Awaited<ReturnType<typeof ort.InferenceSession.create>>
+  try {
+    session = await ort.InferenceSession.create(onnxPath, {
+      ...sessionOptions,
+      executionProviders: providers,
+    })
+  } catch (err) {
+    if (providers.length === 1) throw err
+    // CUDA EP unavailable (missing libs/driver) — fall back to CPU.
+    session = await ort.InferenceSession.create(onnxPath, {
+      ...sessionOptions,
+      executionProviders: ["cpu"],
+    })
+  }
 
   const cfg = JSON.parse(
     (await import("node:fs")).readFileSync(cfgPath, "utf8")

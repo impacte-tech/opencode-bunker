@@ -329,6 +329,25 @@ On first use the provider downloads the tokenizer, config and ONNX graph
 sidecar. If the model is missing or fails, the plugin falls back to the
 heuristic (fail-open) so a turn is never broken.
 
+### GPU acceleration
+
+The provider tries the **CUDA** execution provider first and falls back to CPU.
+The default `onnxruntime-node` build is CPU-only, so to use a GPU:
+
+1. Download the CUDA EP binaries (not bundled — too large for npm):
+   ```bash
+   ONNXRUNTIME_NODE_INSTALL=cuda12 node node_modules/onnxruntime-node/script/install.js
+   ```
+2. Make the CUDA 13 libraries discoverable, e.g. via `LD_LIBRARY_PATH` pointing
+   at your CUDA 13 `lib` directories.
+3. Ensure `CUDA_VISIBLE_DEVICES` uses **ordinals** (`0`, `1`) or is unset — PCI
+   bus IDs (e.g. `0000:01:00.0`) break device selection with
+   `CUDA failure 101: invalid device ordinal`.
+
+Measured on an RTX 5060 Ti: **~58 ms/prompt on CUDA vs ~2.7 s on CPU (~46×)**.
+Note: the snap `bun` strips `LD_LIBRARY_PATH`, so run under Node (or a non-snap
+Bun) for GPU. Set `"classifier": { "useGpu": false }` to force CPU.
+
 ### How it pairs with Transformers.js
 
 Transformers.js provides the tokenizer and the ONNX Runtime backend; the graph
