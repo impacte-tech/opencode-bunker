@@ -1,11 +1,26 @@
 # `opencode-bunker` — Missing Implementation Files Map
 
-Companion to [`README.md`](./README.md). Project root:
-`~/Projects/homelab/opencode-bunker/`.
+Companion to [`README.md`](./README.md). Project root: `<repo-root>/`.
 
-This is the **authoritative map of every implementation file that must be
-created**. Nothing in the project root exists yet except this `.planning/`
-folder, so every row is `pending`.
+This is the **authoritative map of the target implementation**. A working
+**M0-lite** slice is already implemented — consolidated in a single module
+[`src/core.ts`](../src/core.ts) with a default-only entry
+[`src/index.ts`](../src/index.ts) — and is live-verified against opencode
+1.18.34. The per-file split below remains the target; rows not yet written are
+`pending`.
+
+## Implemented now (M0-lite)
+
+| File | Notes |
+| --- | --- |
+| `package.json`, `tsconfig.json`, `opencode.json`, `bunker.config.json` | package + local plugin registration + shipped defaults |
+| `src/index.ts` | plugin entry; **default export only** (opencode treats named exports as plugin factories) |
+| `src/core.ts` | all logic: config, regex presets, custom + increment, heuristic Laya-style provider, coverage, action precedence, chat/tool hooks, rollback, audit logger |
+| `test/smoke.test.ts` | 10 tests (classify, increment, path/command guard, output redaction, regex safety, hooks + rollback) |
+
+Deferred to the milestones below: real `laya-http` / `onnx-local` providers,
+calibration, per-scope rules, allowlist, `bunker_scan` / `/bunker` command,
+prompt-injection evasion passes, and the full file split.
 
 ## Legend
 

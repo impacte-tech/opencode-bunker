@@ -14,6 +14,16 @@ proves the pre-provider guarantee in documentation and structured logs.
 
 `pending` · `in_progress` · `completed` · `blocked` · `cancelled`
 
+## Current implementation (M0-lite)
+
+Working plugin in [`src/core.ts`](../src/core.ts) (entry
+[`src/index.ts`](../src/index.ts), default export only). Implements chat
+redaction/block + rollback, tool path/command guards, tool-output redaction,
+regex presets + custom increments, heuristic Laya-style provider, coverage, and
+the audit log. Verified: `bun test` → 10 pass; live opencode run → prompt
+blocked before dispatch with an audit record. Enabled globally in `flag`
+(observe) mode via `~/.config/opencode/bunker.config.json`.
+
 ## Task table
 
 | # | Task | Status | Evidence |
@@ -25,7 +35,7 @@ proves the pre-provider guarantee in documentation and structured logs.
 | 5 | Write spec, architecture, decisions | completed | `SPEC.md`, `ARCHITECTURE.md`, `DECISIONS.md` |
 | 6 | Build runnable pre-provider proof harness + real audit log (chat + tool surfaces) | completed | `proof/pre-provider-proof.mjs`, `proof/audit.jsonl` |
 | 7 | Document the proof | completed | `EVIDENCE.md` |
-| 8 | **M0 — Scaffold + proof harness** | pending | `FILEMAP.md` M0 |
+| 8 | **M0 — Scaffold + proof harness** | in_progress | M0-lite built in `src/core.ts` + default-only `src/index.ts`; `bun test` 10 pass; live `opencode run` blocked a prompt-injection prompt with `BunkerBlockedError` and 0 provider calls; full file split + `tests/pre-provider.test.ts` still pending |
 | 9 | **M1 — Regex parity layer** | pending | `FILEMAP.md` M1 |
 | 10 | **M2 — Laya-style classifier** | pending | `FILEMAP.md` M2 |
 | 11 | **M3 — Hooks enforcement (redact input + rollback)** | pending | `FILEMAP.md` M3 |

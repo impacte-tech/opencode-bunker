@@ -87,7 +87,7 @@ never user text.
 ## D7 — Mirror OpenRouter Guardrails semantics
 
 **Decision.** Adopt OpenRouter's vocabulary and rules: preset slugs, labels
-(`[EMAIL]`, `[SSN]`, `[SECRET:<id>]`), `redact`/`block`/`flag` actions,
+(`[EMAIL]`, `[SSN]`, `[SECRET:format-id]`), `redact`/`block`/`flag` actions,
 `block > redact > flag` precedence, filter union across scopes, JS-regex
 safety rules (no lookaround/backrefs/nested quantifiers, ≤100k chars), and a
 pipeline-stage trace.

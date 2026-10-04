@@ -1,0 +1,59 @@
+{
+  "enabled": true,
+  "mode": "enforce",
+  "failMode": "open",
+  "allowRemote": false,
+  "builtins": {
+    "email": "redact",
+    "phone": "redact",
+    "ssn": "block",
+    "credit-card": "block",
+    "ip-address": "redact",
+    "secrets": "redact",
+    "person-name": "redact",
+    "address": "redact"
+  },
+  "custom": [
+    { "pattern": "PROJ-\\d{4,6}", "action": "redact", "label": "internal-project-code", "increment": 0.25, "target": "confidential" },
+    { "pattern": "AKIA[0-9A-Z]{16}", "action": "block", "label": "aws-access-key", "increment": 0.5, "target": "pii_secret", "force": true }
+  ],
+  "coverage": {
+    "minConfidence": 0.75,
+    "injectionConfidence": 0.8,
+    "deferTo": "human"
+  },
+  "tools": {
+    "enabled": true,
+    "defaultAction": "flag",
+    "outputRedaction": true,
+    "redactArgs": true,
+    "askFallback": "block",
+    "sensitivePaths": {
+      "**/.env": "block",
+      "**/.env.*": "block",
+      "**/.aws/credentials": "block",
+      "**/.aws/config": "block",
+      "**/*.{pem,key,p12,pfx,jks,keystore}": "block",
+      "**/id_{rsa,ed25519,ecdsa}": "block",
+      "**/.{npmrc,pypirc,netrc,git-credentials}": "block",
+      "**/.kube/config": "block",
+      "**/*.{tfvars,tfstate}": "block",
+      "**/service-account*.json": "block",
+      "**/.ssh/**": "ask"
+    },
+    "credentialCommands": {
+      "aws\\s+secretsmanager\\s+get-secret-value": "block",
+      "aws\\s+ssm\\s+get-parameter[s]?.*--with-decryption": "block",
+      "gcloud\\s+secrets\\s+versions\\s+access": "block",
+      "az\\s+keyvault\\s+secret\\s+show": "block",
+      "vault\\s+(read|kv\\s+get)": "block",
+      "kubectl\\s+get\\s+secret": "block",
+      "(printenv|^env$|^set$)": "ask"
+    }
+  },
+  "logging": {
+    "path": "~/.local/share/opencode/bunker/audit.jsonl",
+    "includeRaw": false,
+    "rotateBytes": 5242880
+  }
+}

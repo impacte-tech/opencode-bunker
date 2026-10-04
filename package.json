@@ -1,0 +1,43 @@
+{
+  "name": "opencode-bunker",
+  "version": "0.1.0",
+  "description": "Local Laya-style guardrail plugin for opencode: classify and redact prompts and tool calls before they reach a model provider.",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "bunker.config.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/impacte-tech/opencode-bunker.git"
+  },
+  "homepage": "https://github.com/impacte-tech/opencode-bunker",
+  "bugs": "https://github.com/impacte-tech/opencode-bunker/issues",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "guardrails",
+    "pii",
+    "secrets",
+    "laya",
+    "prompt-injection"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "typescript": "^5.8.2"
+  }
+}

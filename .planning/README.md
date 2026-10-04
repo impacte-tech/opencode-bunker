@@ -39,7 +39,7 @@ project root (only this `.planning/` folder). Every implementation file is
 ## Primary references
 
 - **Repository**: <https://github.com/impacte-tech/opencode-bunker>
-  (`origin` is wired to `git@github.com:impacte-tech/opencode-bunker.git`).
+  (git remote `origin`).
 - **Laya — local System 1 decision model** (`convaiinnovations/laya`, Apache-2.0):
   <https://huggingface.co/convaiinnovations/laya> · <https://github.com/NandhaKishorM/laya>
   - Non-autoregressive; typed questions (`choice`, `score`, `noul`); calibrated

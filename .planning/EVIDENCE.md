@@ -26,7 +26,7 @@ output redaction). It emits a **real audit log** you can inspect.
 ## 2. Reproduce
 
 ```bash
-cd ~/Projects/homelab/opencode-bunker
+cd "$(git rev-parse --show-toplevel)"   # repo root
 node .planning/proof/pre-provider-proof.mjs
 cat .planning/proof/audit.jsonl
 ```
