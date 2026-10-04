@@ -109,6 +109,29 @@ Send a prompt containing an email or an injection phrase and confirm a
   (`pii_person_name`, `pii_address`), gated by confidence.
 - **Tool output** is scrubbed by `tool.execute.after` before it enters context.
 
+### Secret detection (112 patterns)
+Ported from [`opencode-redact`](https://github.com/meimingqi222/opencode-plugins)
+(MIT): **112 built-in rules** covering GitHub/GitLab/Bitbucket/Sourcegraph,
+AWS/GCP/Cloudflare/Heroku/Alibaba, OpenAI/Anthropic, Slack/Discord/LinkedIn/
+Twitch/Twitter/Facebook, Stripe/Flutterwave, Docker/JWT/npm/PyPI/Rubygems/
+Pulumi/Age/SendGrid, Grafana/New Relic/Databricks/Dynatrace, HubSpot/Intercom/
+Mailchimp/Mailgun/Typeform/Todoist/Canva, private keys, and generic
+`api-key`/`webhook-secret`/`password`/`sk-secret`. Matches are redacted to
+`[REDACTED:<pattern-id>]`.
+
+Four heuristics come with it:
+- **Keyword pre-filter** — each pattern declares cheap keywords; the regex only
+  runs when one is present (hot-path optimization).
+- **Invisible-Unicode stripping** — removes Unicode Tags block characters
+  (U+E0000–U+E007F) before scanning (anti-prompt-injection).
+- **Deep traversal** — recursively scrubs objects/arrays, preserving
+  image/base64 payloads untouched.
+- **Path-based redaction** — redact named fields (`token`,
+  `credentials.password`) with a configurable censor.
+
+When the secret engine is enabled it supersedes the generic built-in `secrets`
+preset, so labels are the specific `[REDACTED:<id>]`.
+
 ### Prompt injection, jailbreak & harmful requests
 - `injection_present`, `jailbreak_attempt`, `harmful_request` are model
   questions; above the injection threshold they produce a `block` with
@@ -241,6 +264,16 @@ live in [`bunker.config.json`](./bunker.config.json); the full reference is in
     "rotateBytes": 5242880
   },
 
+  "secrets": {
+    "enabled": true,              // 112-pattern secret engine
+    "action": "redact",           // redact | block | flag
+    "patterns": true,             // use the built-in 112 patterns
+    "extraPatterns": [],          // { id, category, title, pattern, keywords }
+    "redactPaths": [],            // e.g. ["token", "credentials.password"]
+    "pathCensor": "[REDACTED]",
+    "stripInvisibleUnicode": true
+  },
+
   "classifier": {
     "provider": "heuristic",      // heuristic | onnx-local
     "model": "impacte/bunker-laya",
@@ -340,7 +373,7 @@ Tool records add `surface: "tool"`, `tool`, `callID`, `argsSha256`, and (for
 ## Test
 
 ```bash
-bun test                                     # 10 unit + hook tests
+bun test                                     # 22 unit + hook tests
 bun run scripts/e2e-onnx-local.ts            # model vs the Python reference (8 checks)
 bun run scripts/e2e-plugin.ts                # full pipeline: block/revert/redact/audit (8 checks)
 node .planning/proof/pre-provider-proof.mjs  # standalone proof harness + audit log
@@ -357,11 +390,15 @@ src/
   classifier/
     onnx-local.ts          # Transformers.js + ONNX Runtime provider
     questions.ts           # typed question bank (mirrors the Python)
+  regex/
+    engine.ts              # secret engine (Unicode strip, keyword filter, deep walk, paths)
+    secret-patterns.ts     # 112 built-in secret patterns
 scripts/
   e2e-onnx-local.ts        # model-vs-Python check
   e2e-plugin.ts            # full plugin-pipeline check
 test/
   smoke.test.ts            # 10 unit + hook tests
+  secrets.test.ts          # 12 secret-pattern + heuristic tests
 .planning/                 # spec, architecture, file map, proof
 ```
 
@@ -370,12 +407,15 @@ test/
 **Built**
 - Config loading/merging/validation, regex safety, built-in + custom patterns
   with increment/force.
+- **112-pattern secret engine** (opencode-redact parity): keyword pre-filter,
+  invisible-Unicode stripping, deep traversal (image/base64-safe), path-based
+  redaction, string cache.
 - Heuristic classifier and the `onnx-local` provider (`impacte/bunker-laya`).
 - All four hooks, rollback, action precedence, modes, coverage gate.
 - Tool-call guardrails (sensitive paths, credential commands, destructive
   actions, output redaction).
 - JSONL audit log with the pre-provider proof fields.
-- 10 unit/hook tests + 2 end-to-end scripts.
+- 22 unit/hook tests + 2 end-to-end scripts.
 
 **Pending** (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md))
 - `laya-http` transport (opt-in remote/sidecar classifier).

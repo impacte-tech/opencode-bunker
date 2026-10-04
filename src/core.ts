@@ -18,6 +18,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import {
+  createRedactor,
+  stripInvisibleUnicode,
+  type Redactor,
+  type SecretPattern,
+} from "./regex/engine"
+import { SECRET_PATTERNS } from "./regex/secret-patterns"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,6 +58,15 @@ export interface BunkerConfig {
     credentialCommands: Record<string, Action | "ask">
   }
   logging: { path: string; includeRaw: boolean; rotateBytes: number }
+  secrets: {
+    enabled: boolean
+    action: Action
+    patterns: boolean
+    extraPatterns: SecretPattern[]
+    redactPaths: string[]
+    pathCensor: string
+    stripInvisibleUnicode: boolean
+  }
   classifier: {
     provider: "heuristic" | "onnx-local"
     model: string
@@ -72,6 +88,8 @@ interface Hit {
   increment?: number
   target?: string
   force?: boolean
+  /** Set for secret-pattern hits; redaction is handled by the engine. */
+  secretId?: string
 }
 
 export interface Entity {
@@ -148,6 +166,15 @@ const DEFAULT_CONFIG: BunkerConfig = {
     },
   },
   logging: { path: "~/.local/share/opencode/bunker/audit.jsonl", includeRaw: false, rotateBytes: 5 * 1024 * 1024 },
+  secrets: {
+    enabled: true,
+    action: "redact",
+    patterns: true,
+    extraPatterns: [],
+    redactPaths: [],
+    pathCensor: "[REDACTED]",
+    stripInvisibleUnicode: true,
+  },
   classifier: {
     provider: "heuristic",
     model: "impacte/bunker-laya",
@@ -200,6 +227,29 @@ export function loadConfig(): BunkerConfig {
 }
 
 let config: BunkerConfig = loadConfig()
+
+// ---------------------------------------------------------------------------
+// Secret redaction engine (opencode-redact heuristics)
+// ---------------------------------------------------------------------------
+let redactor: Redactor | null = null
+
+function getRedactor(): Redactor {
+  if (!redactor) {
+    const patterns = config.secrets.patterns
+      ? [...SECRET_PATTERNS, ...config.secrets.extraPatterns]
+      : config.secrets.extraPatterns
+    redactor = createRedactor(patterns, {
+      redactPaths: config.secrets.redactPaths,
+      pathCensor: config.secrets.pathCensor,
+    })
+  }
+  return redactor
+}
+
+/** Reset the cached redactor (used when config changes / in tests). */
+export function resetRedactor(): void {
+  redactor = null
+}
 
 // ---------------------------------------------------------------------------
 // Regex safety (OpenRouter parity)
@@ -293,21 +343,25 @@ function modelProb(key: string, text: string): number {
 // ---------------------------------------------------------------------------
 export function classify(text: string, modelProbs?: Record<string, number>): Decision {
   const t0 = Date.now()
+  const scanText = config.secrets.stripInvisibleUnicode ? stripInvisibleUnicode(text) : text
   const probs: Record<string, number> = {}
-  for (const q of QUESTIONS) probs[q] = modelProbs?.[q] ?? modelProb(q, text)
+  for (const q of QUESTIONS) probs[q] = modelProbs?.[q] ?? modelProb(q, scanText)
 
   const hits: Hit[] = []
   for (const [slug, def] of Object.entries(BUILTIN_DEFS)) {
+    // When the secret engine is on, its 112 specific patterns supersede the
+    // generic built-in `secrets` preset (so labels are `[REDACTED:<id>]`).
+    if (slug === "secrets" && config.secrets.enabled) continue
     const action = config.builtins[slug] ?? "redact"
     if (action === "allow") continue
     const re = new RegExp(def.pattern, "g")
-    const count = (text.match(re) ?? []).length
+    const count = (scanText.match(re) ?? []).length
     if (count) hits.push({ id: slug, question: def.question, action, label: def.label, pattern: re, count })
   }
   for (const c of config.custom) {
     if (!isSafeRegex(c.pattern)) continue
     const re = new RegExp(c.pattern, "g")
-    const count = (text.match(re) ?? []).length
+    const count = (scanText.match(re) ?? []).length
     if (!count) continue
     hits.push({
       id: c.label ?? c.pattern,
@@ -320,6 +374,20 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
       target: c.target,
       force: c.force,
     })
+  }
+  // opencode-redact secret patterns (keyword pre-filtered)
+  if (config.secrets.enabled) {
+    for (const id of getRedactor().detect(scanText)) {
+      hits.push({
+        id,
+        question: "pii_secret",
+        action: config.secrets.action,
+        label: `[REDACTED:${id}]`,
+        pattern: /$^/,
+        count: 1,
+        secretId: id,
+      })
+    }
   }
 
   const incremented = new Set<string>()
@@ -431,8 +499,9 @@ export async function classifyWithProvider(text: string): Promise<Decision> {
     try {
       const provider = await getModelProvider()
       if (provider) {
+        const scanText = config.secrets.stripInvisibleUnicode ? stripInvisibleUnicode(text) : text
         const probs = await Promise.race([
-          provider.predict(text),
+          provider.predict(scanText),
           new Promise<never>((_, reject) =>
             setTimeout(() => reject(new Error("classifier timeout")), config.classifier.timeoutMs)
           ),
@@ -447,15 +516,18 @@ export async function classifyWithProvider(text: string): Promise<Decision> {
 }
 
 export function redact(text: string, hits: Hit[]): string {
-  let out = text
+  let out = config.secrets.stripInvisibleUnicode ? stripInvisibleUnicode(text) : text
   for (const h of hits) {
-    if (h.action === "redact") out = out.replace(h.pattern, h.label)
+    if (h.action === "redact" && !h.secretId) out = out.replace(h.pattern, h.label)
   }
+  if (config.secrets.enabled) out = getRedactor().string(out) ?? out
   return out
 }
 
 export function redactOutput(text: string): string {
   let out = text
+  // Specific secret patterns first, then the generic output presets.
+  if (config.secrets.enabled) out = getRedactor().string(out) ?? out
   for (const s of OUTPUT_SECRETS) out = out.replace(s.pattern, s.label)
   return out
 }
@@ -464,11 +536,33 @@ function redactDeep<T>(value: T, fn: (s: string) => string): T {
   if (typeof value === "string") return fn(value) as unknown as T
   if (Array.isArray(value)) return value.map((v) => redactDeep(v, fn)) as unknown as T
   if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>
+    // Preserve image / base64 payloads (opencode-redact parity).
+    if ("type" in obj && (obj.type === "base64" || obj.type === "image") && "data" in obj) {
+      return value
+    }
+    if ("isImage" in obj && obj.isImage === true && typeof obj.content === "string") {
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(obj)) out[k] = k === "content" ? v : redactDeep(v, fn)
+      return out as unknown as T
+    }
     const out: Record<string, unknown> = {}
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = redactDeep(v, fn)
+    for (const [k, v] of Object.entries(obj)) out[k] = redactDeep(v, fn)
     return out as unknown as T
   }
   return value
+}
+
+/**
+ * Deep-scrub a value: PII/custom hits first, then the secret engine
+ * (image/base64-safe) and any path-based redaction rules.
+ */
+export function scrubValue<T>(value: T, hits: Hit[]): T {
+  const withPii = redactDeep(value, (s) => redactOutput(redact(s, hits)))
+  if (!config.secrets.enabled) return withPii
+  let out = getRedactor().deep(withPii) as T
+  if (config.secrets.redactPaths.length > 0) out = getRedactor().paths(out) as T
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -650,7 +744,7 @@ const plugin: Plugin = async (ctx) => {
       })
       if (decision.action === "block") throw blockError(decision, `tool ${inp.tool}`)
       if (decision.action === "redact" && config.tools.redactArgs) {
-        out.args = redactDeep(out.args, (s) => redactOutput(redact(s, decision.hits)))
+        out.args = scrubValue(out.args, decision.hits)
       }
     },
 
@@ -658,7 +752,7 @@ const plugin: Plugin = async (ctx) => {
       if (!config.tools.outputRedaction) return
       const text = typeof out.output === "string" ? out.output : ""
       const decision = await classifyWithProvider(text)
-      const scrubbed = redactOutput(redact(text, decision.hits))
+      const scrubbed = scrubValue(text, decision.hits)
       const changed = scrubbed !== text
       const canRedact = config.mode === "enforce" || config.mode === "redact"
       audit({ ...decision, action: changed && canRedact ? "redact" : changed ? "flag" : "allow" }, {
@@ -673,7 +767,7 @@ const plugin: Plugin = async (ctx) => {
       })
       if (changed && canRedact) {
         out.output = scrubbed
-        if (out.metadata) out.metadata = redactDeep(out.metadata, (s) => redactOutput(redact(s, decision.hits)))
+        if (out.metadata) out.metadata = scrubValue(out.metadata, decision.hits)
       }
     },
   }

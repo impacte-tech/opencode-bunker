@@ -56,6 +56,15 @@
     "includeRaw": false,
     "rotateBytes": 5242880
   },
+  "secrets": {
+    "enabled": true,
+    "action": "redact",
+    "patterns": true,
+    "extraPatterns": [],
+    "redactPaths": [],
+    "pathCensor": "[REDACTED]",
+    "stripInvisibleUnicode": true
+  },
   "classifier": {
     "provider": "heuristic",
     "model": "impacte/bunker-laya",
