@@ -2,32 +2,267 @@
 
 A local, Laya-style guardrail plugin for [opencode](https://opencode.ai) that
 classifies and redacts **prompts and tool calls before they reach a model
-provider** — PII, secrets, prompt injection, sensitive file reads, and
-credential-store commands.
+provider** — PII, secrets, prompt injection, jailbreak/harmful requests,
+sensitive file reads, and credential-store commands.
 
-> **Status: usable now (M0-lite).** A working plugin is implemented in
-> [`src/core.ts`](./src/core.ts) and live-verified against opencode 1.18.34:
-> a prompt-injection prompt was blocked **before any provider call**, with the
-> decision written to the audit log. The full target architecture and file map
-> are in [`.planning/`](./.planning/README.md).
+> **Status: usable, with a real local model.** The plugin is implemented in
+> [`src/core.ts`](./src/core.ts) and verified against opencode 1.18.34: a
+> prompt-injection prompt is blocked **before any provider call**, with the
+> decision written to the audit log first. The classifier can run either a
+> zero-dependency heuristic or the fine-tuned
+> [`impacte/bunker-laya`](https://huggingface.co/impacte/bunker-laya) ONNX model
+> in-process via Transformers.js. The full target architecture and file map are
+> in [`.planning/`](./.planning/README.md).
 
-## What works today
+## Requirements
 
-| Area | Behavior |
+- [opencode](https://opencode.ai) `>= 1.2.0`
+- [Bun](https://bun.sh) (or Node 22+) to install dependencies
+- Optional: ~1.6 GB free disk for the `onnx-local` model (downloaded on first
+  use; the heuristic provider needs no download)
+
+## Quick start
+
+```bash
+git clone https://github.com/impacte-tech/opencode-bunker.git
+cd opencode-bunker
+bun install
+
+# register the plugin (global) — see "Install" for per-project
+# add to ~/.config/opencode/opencode.jsonc:
+#   { "plugin": ["file:///absolute/path/to/opencode-bunker/src/index.ts"] }
+
+# start in observe mode so nothing is blocked while you tune
+cp bunker.config.json ~/.config/opencode/bunker.config.json
+# then set "mode": "flag" in that file and restart opencode
+```
+
+## Install
+
+### 1. Get the code and dependencies
+
+```bash
+git clone https://github.com/impacte-tech/opencode-bunker.git
+cd opencode-bunker
+bun install
+```
+
+### 2. Register the plugin with opencode
+
+**Global (all projects)** — edit `~/.config/opencode/opencode.jsonc`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:///absolute/path/to/opencode-bunker/src/index.ts"]
+}
+```
+
+**Per project** — add the same `plugin` entry to that project's
+`opencode.json`. Use an absolute `file://` path.
+
+### 3. Configure
+
+Copy the shipped defaults and edit them:
+
+```bash
+cp bunker.config.json ~/.config/opencode/bunker.config.json
+```
+
+Or keep a project-local `./bunker.config.json`. Start in **observe mode** so
+the plugin logs decisions without blocking anything:
+
+```jsonc
+{ "mode": "flag" }
+```
+
+### 4. Restart opencode
+
+Config is loaded at startup, so restart after editing it.
+
+### 5. Verify
+
+```bash
+bun test                                     # 10 unit + hook tests
+tail -f ~/.local/share/opencode/bunker/audit.jsonl   # watch decisions
+```
+
+Send a prompt containing an email or an injection phrase and confirm a
+`bunker.decision` line appears. When you are happy with the decisions, switch
+`"mode"` to `"enforce"`.
+
+## Features
+
+### Prompt & message guardrails
+- **`chat.message`** — the earliest interception point. Classifies the prompt,
+  redacts matched spans in place, and on `block` calls `session.revert` +
+  `session.abort` then throws, so the provider is never called.
+- **`experimental.chat.messages.transform`** — the last pre-dispatch net.
+  Re-scans the **exact outgoing message array** (history + tool output) and
+  blocks/redacts anything added after `chat.message`.
+
+### PII & secrets
+- **Regex presets** (OpenRouter parity): email, phone, SSN, credit card, IP
+  address, provider secrets (`AKIA…`, `ghp_…`, `sk-or-v1-…`, `xox…`) →
+  `[EMAIL]`, `[PHONE]`, `[SSN]`, `[CREDIT_CARD]`, `[IP_ADDRESS]`, `[SECRET]`.
+- **Contextual PII** via the model: person name and mailing address
+  (`pii_person_name`, `pii_address`), gated by confidence.
+- **Tool output** is scrubbed by `tool.execute.after` before it enters context.
+
+### Prompt injection, jailbreak & harmful requests
+- `injection_present`, `jailbreak_attempt`, `harmful_request` are model
+  questions; above the injection threshold they produce a `block` with
+  `[PROMPT_INJECTION]` / `[JAILBREAK]` / `[HARMFUL]`.
+
+### Tool-call guardrails
+- **`tool.execute.before`** blocks before the tool runs:
+  - **Sensitive paths** — `.env`, `.env.*`, `.aws/credentials`, `.aws/config`,
+    `*.pem`/`*.key`/`*.p12`/`*.pfx`/`*.jks`/`*.keystore`, `id_rsa`/`id_ed25519`/
+    `id_ecdsa`, `.npmrc`/`.pypirc`/`.netrc`/`.git-credentials`, `.kube/config`,
+    `*.tfvars`/`*.tfstate`, `service-account*.json`; `.ssh/**` → `ask`.
+  - **Credential-store commands** — `aws secretsmanager get-secret-value`,
+    `aws ssm get-parameter --with-decryption`, `gcloud secrets versions access`,
+    `az keyvault secret show`, `vault read`/`kv get`, `kubectl get secret`;
+    `printenv`/`env`/`set` → `ask`.
+  - **Destructive actions** — `rm -rf`, `drop table`, `terraform destroy`.
+- **`tool.execute.after`** redacts secrets/PII from the result (and metadata)
+  before it is stored or returned.
+
+### Custom regex + confidence increment
+- User patterns can `redact`/`block`/`flag`, carry a `label`, and **increment**
+  a model question's probability (`increment`) — optionally forcing an action
+  (`force`). This is the OpenRouter "custom content filter" behavior.
+- Regexes are validated: no lookaround, backreferences, or nested quantifiers;
+  invalid patterns are skipped while the rest still apply.
+
+### Classifier providers
+- **`heuristic`** (default) — zero-dependency regex probes; works offline with
+  no model download.
+- **`onnx-local`** — the fine-tuned Laya decision model, run in-process with
+  Transformers.js + ONNX Runtime. No Python sidecar. Fail-open to the heuristic
+  if the model is missing or errors.
+
+### Audit & proof
+- Append-only JSONL at `~/.local/share/opencode/bunker/audit.jsonl` (mode
+  `0600`), recording **metadata + sha256 of the prompt, never raw text** unless
+  `includeRaw: true`. Every record carries `stage: "pre_provider"`,
+  `providerDispatched`, `decision`, `confidence`, `entities`, `latencyMs`, and
+  `promptSha256`.
+
+## How it works
+
+### Hooks
+
+| Hook | Role |
 | --- | --- |
-| Chat prompts | `chat.message` classifies + redacts; `block` calls `session.revert` + `session.abort` then throws |
-| Outgoing messages | `experimental.chat.messages.transform` re-scans the exact bytes and blocks/redacts |
-| PII (regex) | email, phone, SSN, credit card, IP, provider secrets → `[EMAIL]`, `[SSN]`, `[SECRET]`, … |
-| PII (contextual) | person-name / address via the local heuristic provider (Laya-style typed questions) |
-| Injection | prompt-injection phrases → `block` |
-| Custom regex + increment | user regexes raise the model's confidence and can force an action (OpenRouter-style) |
-| Tool calls | `tool.execute.before` blocks `.env`, `.aws/credentials`, keys, `.kube/config`, `*.tfvars`, … and `aws secretsmanager get-secret-value`, `aws ssm … --with-decryption`, `gcloud secrets`, `az keyvault`, `vault`, `kubectl get secret` |
-| Tool output | `tool.execute.after` redacts secrets/PII before the result enters context |
-| Audit | JSONL at `~/.local/share/opencode/bunker/audit.jsonl` (metadata + sha256, never raw text by default) |
+| `chat.message` | classify + redact the input; `block` → `session.revert` + `session.abort` + throw |
+| `experimental.chat.messages.transform` | re-scan the exact outgoing messages; `block` → throw |
+| `tool.execute.before` | classify tool + args; `block` → throw (tool never runs); `redact` → scrub args |
+| `tool.execute.after` | scrub secrets/PII from tool output + metadata |
 
-Not yet built (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md)):
-the `laya-http` provider, calibration, per-scope rules, allowlist, the
-`bunker_scan` tool and `/bunker` command.
+### Decision pipeline
+
+```
+normalize(text)
+  ├─ builtin regex presets ──────────────► hits
+  ├─ custom regex (+increment/force) ────► hits
+  ├─ model typed questions ──────────────► probabilities
+  │    (heuristic | onnx-local)
+  ├─ coverage gate ──────────────────────► decided | deferred
+  ├─ fuse(model, regex) ─────────────────► probability += Σ increments (clamp 1)
+  └─ action precedence ──────────────────► Decision
+       block > redact > flag > allow
+       mode downgrades (observe/flag/redact)
+```
+
+### Actions & modes
+
+- **Actions:** `allow`, `flag`, `redact`, `block` (precedence
+  `block > redact > flag > allow`).
+- **Modes:**
+  - `observe` / `flag` — audit only; never blocks or redacts.
+  - `redact` — redacts matched content; downgrades `block` to `redact`.
+  - `enforce` — blocks and redacts as decided.
+
+## Configure
+
+Config is deep-merged, **highest precedence first**:
+
+1. `$BUNKER_CONFIG` (path to a JSON file)
+2. `~/.config/opencode/bunker.config.json`
+3. `./bunker.config.json`
+4. built-in defaults
+
+Restart opencode after editing (config is loaded at startup). Shipped defaults
+live in [`bunker.config.json`](./bunker.config.json); the full reference is in
+[`.planning/SPEC.md`](./.planning/SPEC.md) §5.
+
+### Full reference
+
+```jsonc
+{
+  "enabled": true,
+  "mode": "enforce",              // observe | flag | redact | enforce
+  "failMode": "open",             // open | closed (classifier failure)
+  "allowRemote": false,           // refuse non-loopback classifier endpoints
+
+  "builtins": {                   // per-preset action
+    "email": "redact", "phone": "redact", "ssn": "block",
+    "credit-card": "block", "ip-address": "redact", "secrets": "redact",
+    "person-name": "redact", "address": "redact"
+  },
+
+  "custom": [
+    { "pattern": "PROJ-\\d{4,6}", "action": "redact",
+      "label": "internal-project-code", "increment": 0.25, "target": "confidential" },
+    { "pattern": "AKIA[0-9A-Z]{16}", "action": "block",
+      "label": "aws-access-key", "increment": 0.5, "target": "pii_secret", "force": true }
+  ],
+
+  "coverage": {
+    "minConfidence": 0.75,        // model PII questions
+    "injectionConfidence": 0.8,   // injection/jailbreak/harmful
+    "deferTo": "human"            // human | allow | block
+  },
+
+  "tools": {
+    "enabled": true,
+    "defaultAction": "flag",
+    "outputRedaction": true,
+    "redactArgs": true,
+    "askFallback": "block",
+    "sensitivePaths": { "**/.env": "block", "**/.ssh/**": "ask" },
+    "credentialCommands": { "aws\\s+secretsmanager\\s+get-secret-value": "block" }
+  },
+
+  "logging": {
+    "path": "~/.local/share/opencode/bunker/audit.jsonl",
+    "includeRaw": false,
+    "rotateBytes": 5242880
+  },
+
+  "classifier": {
+    "provider": "heuristic",      // heuristic | onnx-local
+    "model": "impacte/bunker-laya",
+    "dtype": "fp32",              // fp32 (correct) | q8 (INT8, degraded)
+    "cacheDir": "~/.cache/opencode-bunker",
+    "maxLen": 1024,
+    "headMaxLen": 256,
+    "timeoutMs": 120000
+  }
+}
+```
+
+### Custom patterns
+
+| Field | Meaning |
+| --- | --- |
+| `pattern` | JS regex source (validated for safety) |
+| `action` | `allow` \| `flag` \| `redact` \| `block` |
+| `label` | replacement text (default `[REDACTED]`) |
+| `increment` | confidence delta added to `target` (clamped to 1) |
+| `target` | model question to increment (e.g. `pii_secret`, `confidential`) |
+| `force` | escalate to `action` regardless of the model |
 
 ## Local model (`onnx-local`)
 
@@ -39,7 +274,6 @@ ModernBERT-large fine-tune that answers the typed `noul` questions
 single forward pass:
 
 ```jsonc
-// bunker.config.json
 "classifier": {
   "provider": "onnx-local",
   "model": "impacte/bunker-laya",
@@ -68,79 +302,94 @@ text ──AutoTokenizer──► input_ids
      ──ONNX Runtime─────► logits ──softmax/temperature──► P(true) per question
 ```
 
-The head is `[CLS] <qtype> question: <instructions> [SEP] [MASK] false: … [MASK] true: … [SEP] <state> [SEP]`,
+The head is
+`[CLS] <qtype> question: <instructions> [SEP] [MASK] false: … [MASK] true: … [SEP] <state> [SEP]`,
 with `marker_pos` pointing at each option's `[MASK]`. The model card documents
 the full contract. The provider is a faithful port of Laya's
 `build_sequence` / `_decode_answers`, verified against the Python
 `laya.ONNXAgent` (identical sequences and probabilities).
 
-Run the end-to-end check:
+## Audit log & proof
 
-```bash
-bun run scripts/e2e-onnx-local.ts
-```
-
-## Use it
-
-The plugin is **already enabled globally** on this machine in **`flag`
-(observe) mode** — it logs decisions but never blocks or redacts. To change
-behavior, edit `~/.config/opencode/bunker.config.json`:
+One JSON line per decision. Example (blocked injection):
 
 ```jsonc
 {
-  "mode": "flag"      // observe | flag | redact | enforce
+  "ts": "2026-10-04T10:07:00.000Z",
+  "event": "bunker.decision",
+  "stage": "pre_provider",
+  "hook": "chat.message",
+  "sessionID": "…", "messageID": "…",
+  "providerDispatched": false,
+  "decisionId": "…",
+  "decision": "block",
+  "confidence": 0.99,
+  "deferred": false,
+  "entities": [{ "type": "PROMPT_INJECTION", "source": "model", "action": "block", "count": 1, "confidence": 0.99 }],
+  "regexIncrements": [],
+  "promptSha256": "…64 hex…",
+  "promptBytes": 62,
+  "latencyMs": 41,
+  "rawIncluded": false
 }
 ```
 
-- `flag` / `observe` — audit only, never blocks or redacts (current default).
-- `redact` — redacts matched content; downgrades `block` to `redact`.
-- `enforce` — blocks and redacts as decided.
-
-Restart opencode after editing config (config is loaded at startup).
-
-To enable it in another project only, add to that project's `opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///path/to/opencode-bunker/src/index.ts"]
-}
-```
-
-To disable globally, remove the `"plugin": [...]` entry from
-`~/.config/opencode/opencode.jsonc`.
-
-## Configure
-
-Full reference: [`.planning/SPEC.md`](./.planning/SPEC.md) §5. Precedence:
-`$BUNKER_CONFIG` → `~/.config/opencode/bunker.config.json` → `./bunker.config.json`
-→ defaults. See [`bunker.config.json`](./bunker.config.json) for the shipped
-defaults, including custom patterns:
-
-```jsonc
-"custom": [
-  { "pattern": "PROJ-\\d{4,6}", "action": "redact", "label": "internal-project-code", "increment": 0.25, "target": "confidential" },
-  { "pattern": "AKIA[0-9A-Z]{16}", "action": "block", "label": "aws-access-key", "increment": 0.5, "target": "pii_secret", "force": true }
-]
-```
-
-Regexes are validated (no lookaround, backreferences, or nested quantifiers —
-OpenRouter parity). Invalid patterns are skipped with the rest still applied.
+Tool records add `surface: "tool"`, `tool`, `callID`, `argsSha256`, and (for
+`tool.execute.after`) `outputSha256`, `outputRedacted`, `outputWouldRedact`.
 
 ## Test
 
 ```bash
-bun test                                   # 10 unit + hook tests
-node .planning/proof/pre-provider-proof.mjs # standalone proof harness + audit log
+bun test                                     # 10 unit + hook tests
+bun run scripts/e2e-onnx-local.ts            # model vs the Python reference (8 checks)
+bun run scripts/e2e-plugin.ts                # full pipeline: block/revert/redact/audit (8 checks)
+node .planning/proof/pre-provider-proof.mjs  # standalone proof harness + audit log
 ```
+
+The E2E scripts download the model on first run (cached afterwards).
+
+## Project layout
+
+```
+src/
+  index.ts                 # plugin entry — default export only
+  core.ts                  # config, regex, pipeline, hooks, audit
+  classifier/
+    onnx-local.ts          # Transformers.js + ONNX Runtime provider
+    questions.ts           # typed question bank (mirrors the Python)
+scripts/
+  e2e-onnx-local.ts        # model-vs-Python check
+  e2e-plugin.ts            # full plugin-pipeline check
+test/
+  smoke.test.ts            # 10 unit + hook tests
+.planning/                 # spec, architecture, file map, proof
+```
+
+## Current state & roadmap
+
+**Built**
+- Config loading/merging/validation, regex safety, built-in + custom patterns
+  with increment/force.
+- Heuristic classifier and the `onnx-local` provider (`impacte/bunker-laya`).
+- All four hooks, rollback, action precedence, modes, coverage gate.
+- Tool-call guardrails (sensitive paths, credential commands, destructive
+  actions, output redaction).
+- JSONL audit log with the pre-provider proof fields.
+- 10 unit/hook tests + 2 end-to-end scripts.
+
+**Pending** (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md))
+- `laya-http` transport (opt-in remote/sidecar classifier).
+- Temperature calibration table, per-scope rules, allowlist.
+- `bunker_scan` tool and `/bunker` command.
+- The full per-file split of `src/core.ts`.
 
 ## Contributor note
 
 opencode treats **every named export** of a plugin module as a plugin factory.
-That is why `src/index.ts` exports only `default` and all helpers live in
+`src/index.ts` therefore exports only `default`; all helpers live in
 `src/core.ts`. Do not add named exports to `src/index.ts`.
 
 ## Repository
 
 <https://github.com/impacte-tech/opencode-bunker> · MIT (plugin); Laya is
-Apache-2.0.
+Apache-2.0. Model: <https://huggingface.co/impacte/bunker-laya>.
