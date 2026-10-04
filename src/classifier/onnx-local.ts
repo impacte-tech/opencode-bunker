@@ -41,6 +41,8 @@ export interface OnnxLocalOptions {
   temperature?: number[]
   /** noul question bank. */
   questions: Record<string, OnnxQuestion>
+  /** ONNX Runtime intra-op threads (default 1). */
+  intraOpNumThreads?: number
   /** Optional progress callback. */
   onProgress?: (message: string) => void
 }
@@ -196,7 +198,7 @@ export async function createOnnxLocalProvider(
       (tokenizer as any).bos_token_id ?? encCfg.cls_token_id ?? 50281
   }
   const session = await ort.InferenceSession.create(onnxPath, {
-    intraOpNumThreads: 1,
+    intraOpNumThreads: options.intraOpNumThreads ?? 4,
     interOpNumThreads: 1,
   })
 

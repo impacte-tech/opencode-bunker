@@ -1,5 +1,11 @@
-import { test, expect } from "bun:test"
-import plugin, { classify, classifyTool, globToRegex, isSafeRegex, redact, redactOutput } from "../src/core"
+import { test, expect, beforeAll } from "bun:test"
+import plugin, { classify, classifyTool, globToRegex, isSafeRegex, redact, redactOutput, reloadConfig } from "../src/core"
+
+beforeAll(() => {
+  // Ensure this file uses the shipped defaults, not another suite's config.
+  delete process.env.BUNKER_CONFIG
+  reloadConfig()
+})
 
 const AT = String.fromCharCode(64)
 const email = (l: string, d: string) => `${l}${AT}${d}`

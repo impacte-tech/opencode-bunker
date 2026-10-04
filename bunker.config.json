@@ -72,6 +72,7 @@
     "cacheDir": "~/.cache/opencode-bunker",
     "maxLen": 1024,
     "headMaxLen": 256,
-    "timeoutMs": 120000
+    "timeoutMs": 120000,
+    "intraOpNumThreads": 4
   }
 }

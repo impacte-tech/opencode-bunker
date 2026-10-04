@@ -1,7 +1,12 @@
-import { test, expect } from "bun:test"
-import { classify, redact, scrubValue } from "../src/core"
+import { test, expect, beforeAll } from "bun:test"
+import { classify, redact, scrubValue, reloadConfig } from "../src/core"
 import { createRedactor, redactByPaths, stripInvisibleUnicode } from "../src/regex/engine"
 import { SECRET_PATTERNS } from "../src/regex/secret-patterns"
+
+beforeAll(() => {
+  delete process.env.BUNKER_CONFIG
+  reloadConfig()
+})
 
 const gh = "ghp_" + "a".repeat(36)
 const aws = "AKIAIOSFODNN7EXAMPLE"

@@ -75,6 +75,7 @@ export interface BunkerConfig {
     maxLen: number
     headMaxLen: number
     timeoutMs: number
+    intraOpNumThreads: number
   }
 }
 
@@ -183,6 +184,7 @@ const DEFAULT_CONFIG: BunkerConfig = {
     maxLen: 1024,
     headMaxLen: 256,
     timeoutMs: 120_000,
+    intraOpNumThreads: 4,
   },
 }
 
@@ -249,6 +251,13 @@ function getRedactor(): Redactor {
 /** Reset the cached redactor (used when config changes / in tests). */
 export function resetRedactor(): void {
   redactor = null
+}
+
+/** Re-read the config and drop cached singletons (used in tests). */
+export function reloadConfig(): void {
+  config = loadConfig()
+  redactor = null
+  providerPromise = null
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +427,7 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
     const p = probs[c.key]
     if (p >= config.coverage.minConfidence) {
       entities.push({ type: c.type, source: incremented.has(c.key) ? "both" : "model", action: c.action, count: 1, label: c.label, confidence: Number(p.toFixed(2)) })
-    } else if (p >= 0.5) {
+    } else if (p > 0.5) {
       deferredEntities.push({ type: c.type, source: "model", action: "flag", count: 1, label: c.label, confidence: Number(p.toFixed(2)) })
     }
   }
@@ -478,6 +487,7 @@ async function getModelProvider(): Promise<ModelProvider | null> {
           cacheDir: config.classifier.cacheDir,
           maxLen: config.classifier.maxLen,
           headMaxLen: config.classifier.headMaxLen,
+          intraOpNumThreads: config.classifier.intraOpNumThreads,
           questions: MODEL_QUESTIONS,
         })
       } catch {

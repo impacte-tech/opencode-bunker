@@ -373,11 +373,20 @@ Tool records add `surface: "tool"`, `tool`, `callID`, `argsSha256`, and (for
 ## Test
 
 ```bash
-bun test                                     # 22 unit + hook tests
+bun test                                     # 91 unit + hook + jailbreak tests
 bun run scripts/e2e-onnx-local.ts            # model vs the Python reference (8 checks)
 bun run scripts/e2e-plugin.ts                # full pipeline: block/revert/redact/audit (8 checks)
+bun run scripts/e2e-jailbreak.ts             # jailbreak corpus report
 node .planning/proof/pre-provider-proof.mjs  # standalone proof harness + audit log
 ```
+
+The jailbreak suite (`test/jailbreak.test.ts`) scores a **68-case corpus** of
+state-of-the-art injection/jailbreak techniques — direct override, DAN/AIM/STAN
+personas, developer-mode, prompt extraction, fictional framing, base64/hex/
+typoglycemia/leetspeak obfuscation, delimiter injection, refusal suppression,
+and harmful requests — plus 12 benign controls. Current result: **100% of
+injections blocked, 100% of benign allowed** (the corpus is scored once against
+the `onnx-local` model; first run downloads ~1.6 GB).
 
 The E2E scripts download the model on first run (cached afterwards).
 
@@ -396,9 +405,12 @@ src/
 scripts/
   e2e-onnx-local.ts        # model-vs-Python check
   e2e-plugin.ts            # full plugin-pipeline check
+  e2e-jailbreak.ts         # jailbreak corpus report
 test/
   smoke.test.ts            # 10 unit + hook tests
   secrets.test.ts          # 12 secret-pattern + heuristic tests
+  jailbreak.test.ts        # 68-case injection/jailbreak E2E suite
+  fixtures/jailbreak-corpus.ts
 .planning/                 # spec, architecture, file map, proof
 ```
 
@@ -415,7 +427,8 @@ test/
 - Tool-call guardrails (sensitive paths, credential commands, destructive
   actions, output redaction).
 - JSONL audit log with the pre-provider proof fields.
-- 22 unit/hook tests + 2 end-to-end scripts.
+- 91 tests: 10 unit/hook, 12 secret/heuristic, 68-case jailbreak E2E, plus 2
+  end-to-end scripts.
 
 **Pending** (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md))
 - `laya-http` transport (opt-in remote/sidecar classifier).
