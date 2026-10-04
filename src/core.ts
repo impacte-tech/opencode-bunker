@@ -25,6 +25,7 @@ import {
   type SecretPattern,
 } from "./regex/engine"
 import { SECRET_PATTERNS } from "./regex/secret-patterns"
+import { INJECTION_PATTERNS } from "./regex/injection-patterns"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -319,7 +320,7 @@ const PROBE = {
   ip: /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
   secret: /\b(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|sk-or-v1-[A-Za-z0-9]{32,})\b/,
   person: /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/,
-  injection: /ignore\s+(all\s+)?previous\s+instructions/i,
+  injection: /\b(ignore\s+(all\s+)?previous\s+instructions|disable\s+(all\s+)?filters?|bypass\s+(all\s+)?filters?|developer\s+mode|reveal\s+your\s+system\s+prompt)\b/i,
   confidential: /\b(confidential|internal|escalat)/i,
 }
 
@@ -396,6 +397,14 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
         count: 1,
         secretId: id,
       })
+    }
+  }
+  // deterministic injection / jailbreak patterns (always block)
+  for (const p of INJECTION_PATTERNS) {
+    const re = new RegExp(p.pattern, "gi")
+    const count = (scanText.match(re) ?? []).length
+    if (count) {
+      hits.push({ id: p.id, question: "injection_present", action: "block", label: p.label, pattern: re, count })
     }
   }
 

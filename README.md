@@ -136,6 +136,12 @@ preset, so labels are the specific `[REDACTED:<id>]`.
 - `injection_present`, `jailbreak_attempt`, `harmful_request` are model
   questions; above the injection threshold they produce a `block` with
   `[PROMPT_INJECTION]` / `[JAILBREAK]` / `[HARMFUL]`.
+- A **deterministic pattern layer** (`src/regex/injection-patterns.ts`) always
+  blocks high-signal phrases even when the model is unavailable or
+  under-confident: `disable/turn off all filters`, `bypass all restrictions`,
+  `ignore/disregard previous instructions`, `reveal your system prompt`,
+  `developer mode`, `act as an unrestricted AI`, `you must comply`, and
+  `override your safety settings`.
 
 ### Tool-call guardrails
 - **`tool.execute.before`** blocks before the tool runs:
@@ -373,7 +379,7 @@ Tool records add `surface: "tool"`, `tool`, `callID`, `argsSha256`, and (for
 ## Test
 
 ```bash
-bun test                                     # 91 unit + hook + jailbreak tests
+bun test                                     # 113 unit + hook + jailbreak tests
 bun run scripts/e2e-onnx-local.ts            # model vs the Python reference (8 checks)
 bun run scripts/e2e-plugin.ts                # full pipeline: block/revert/redact/audit (8 checks)
 bun run scripts/e2e-jailbreak.ts             # jailbreak corpus report
@@ -402,6 +408,7 @@ src/
   regex/
     engine.ts              # secret engine (Unicode strip, keyword filter, deep walk, paths)
     secret-patterns.ts     # 112 built-in secret patterns
+    injection-patterns.ts  # deterministic injection/jailbreak patterns
 scripts/
   e2e-onnx-local.ts        # model-vs-Python check
   e2e-plugin.ts            # full plugin-pipeline check
@@ -409,6 +416,7 @@ scripts/
 test/
   smoke.test.ts            # 10 unit + hook tests
   secrets.test.ts          # 12 secret-pattern + heuristic tests
+  injection.test.ts        # 21 deterministic injection-pattern tests
   jailbreak.test.ts        # 68-case injection/jailbreak E2E suite
   fixtures/jailbreak-corpus.ts
 .planning/                 # spec, architecture, file map, proof
@@ -427,8 +435,8 @@ test/
 - Tool-call guardrails (sensitive paths, credential commands, destructive
   actions, output redaction).
 - JSONL audit log with the pre-provider proof fields.
-- 91 tests: 10 unit/hook, 12 secret/heuristic, 68-case jailbreak E2E, plus 2
-  end-to-end scripts.
+- 113 tests: 10 unit/hook, 12 secret/heuristic, 21 injection-pattern, 68-case
+  jailbreak E2E, plus 2 end-to-end scripts.
 
 **Pending** (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md))
 - `laya-http` transport (opt-in remote/sidecar classifier).
