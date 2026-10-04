@@ -26,8 +26,59 @@ credential-store commands.
 | Audit | JSONL at `~/.local/share/opencode/bunker/audit.jsonl` (metadata + sha256, never raw text by default) |
 
 Not yet built (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md)):
-the real Laya `laya-http` / `onnx-local` providers, calibration, per-scope
-rules, allowlist, the `bunker_scan` tool and `/bunker` command.
+the `laya-http` provider, calibration, per-scope rules, allowlist, the
+`bunker_scan` tool and `/bunker` command.
+
+## Local model (`onnx-local`)
+
+The default classifier is a zero-dependency heuristic. For real accuracy, point
+the plugin at the fine-tuned Laya decision model
+[`impacte/bunker-laya`](https://huggingface.co/impacte/bunker-laya) — a
+ModernBERT-large fine-tune that answers the typed `noul` questions
+(`pii_*`, `injection_present`, `jailbreak_attempt`, `harmful_request`) in a
+single forward pass:
+
+```jsonc
+// bunker.config.json
+"classifier": {
+  "provider": "onnx-local",
+  "model": "impacte/bunker-laya",
+  "dtype": "fp32",              // fp32 is correct; q8 (INT8) degrades the PII head
+  "cacheDir": "~/.cache/opencode-bunker",
+  "maxLen": 1024,
+  "headMaxLen": 256,
+  "timeoutMs": 120000
+}
+```
+
+On first use the provider downloads the tokenizer, config and ONNX graph
+(~1.6 GB, cached under `cacheDir`) and runs it **in-process** — no Python
+sidecar. If the model is missing or fails, the plugin falls back to the
+heuristic (fail-open) so a turn is never broken.
+
+### How it pairs with Transformers.js
+
+Transformers.js provides the tokenizer and the ONNX Runtime backend; the graph
+is a custom decision head, so the provider tokenizes with `AutoTokenizer` and
+runs the session directly (`src/classifier/onnx-local.ts`):
+
+```
+text ──AutoTokenizer──► input_ids
+     ──build Laya head──► marker_pos, marker_mask, qtype
+     ──ONNX Runtime─────► logits ──softmax/temperature──► P(true) per question
+```
+
+The head is `[CLS] <qtype> question: <instructions> [SEP] [MASK] false: … [MASK] true: … [SEP] <state> [SEP]`,
+with `marker_pos` pointing at each option's `[MASK]`. The model card documents
+the full contract. The provider is a faithful port of Laya's
+`build_sequence` / `_decode_answers`, verified against the Python
+`laya.ONNXAgent` (identical sequences and probabilities).
+
+Run the end-to-end check:
+
+```bash
+bun run scripts/e2e-onnx-local.ts
+```
 
 ## Use it
 

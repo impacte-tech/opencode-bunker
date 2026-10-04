@@ -16,6 +16,9 @@ This is the **authoritative map of the target implementation**. A working
 | `package.json`, `tsconfig.json`, `opencode.json`, `bunker.config.json` | package + local plugin registration + shipped defaults |
 | `src/index.ts` | plugin entry; **default export only** (opencode treats named exports as plugin factories) |
 | `src/core.ts` | all logic: config, regex presets, custom + increment, heuristic Laya-style provider, coverage, action precedence, chat/tool hooks, rollback, audit logger |
+| `src/classifier/onnx-local.ts` | `onnx-local` provider: Transformers.js tokenizer + ONNX Runtime over `impacte/bunker-laya` |
+| `src/classifier/questions.ts` | the typed question bank (mirrors `opencode-bunker-laya/src/bunker_laya/questions.py`) |
+| `scripts/e2e-onnx-local.ts` | end-to-end check against the published model |
 | `test/smoke.test.ts` | 10 tests (classify, increment, path/command guard, output redaction, regex safety, hooks + rollback) |
 
 Deferred to the milestones below: real `laya-http` / `onnx-local` providers,
@@ -77,8 +80,8 @@ prompt-injection evasion passes, and the full file split.
 | 4.1 | `src/classifier/questions.ts` | P0 | adapt | pending | The **typed question bank**. One `noul` per PII category + injection + destructive + a `choice` action and a `score` sensitivity. Uses neutral keys to dodge Laya's `noul` label bias (see `DECISIONS.md` D4). `LY` |
 | 4.2 | `src/classifier/laya-client.ts` | P0 | adapt | pending | HTTP client for a Laya-compatible endpoint: `POST /v1/systemone` (Jev shape) with timeout, bearer `LAYA_API_KEY`, `X-Client: opencode-bunker`, warm-up call, fail-open/closed per config. `LY` |
 | 4.3 | `src/classifier/laya-server.ts` | P1 | new | pending | Sidecar lifecycle: detect `laya-serve` on `127.0.0.1:8090`, optionally spawn `python -m laya.serve` / `uv run`, health-check, preload, shutdown on plugin dispose. Refuses non-loopback endpoints unless `allowRemote`. `LY` |
-| 4.4 | `src/classifier/onnx-local.ts` | P2 | new | pending | **"Laya-style" in-process fallback**: ONNX Runtime ModernBERT encoder + decision head (choice/score/noul) so the plugin classifies with no Python sidecar. Loads `models/bunker-pii/` (see 4.5). |
-| 4.5 | `src/classifier/model-manager.ts` | P2 | new | pending | Resolve/download/cache local ONNX weights (`convaiinnovations/laya` export or a PII-fine-tuned head), verify sha256, LRU-load, expose `.predict()`. |
+| 4.4 | `src/classifier/onnx-local.ts` | P2 | new | **built** | **"Laya-style" in-process provider**: Transformers.js `AutoTokenizer` + ONNX Runtime over `impacte/bunker-laya` (ModernBERT-large + decision head). Ports Laya `build_sequence`/`_decode_answers`; downloads + caches the graph; fail-open to the heuristic. Verified against `laya.ONNXAgent` (identical sequences/probabilities). |
+| 4.5 | `src/classifier/model-manager.ts` | P2 | new | **built** | Resolve/download/cache the ONNX weights + tokenizer + config from the Hub. Consolidated into `onnx-local.ts` (`downloadFile` + cache dir). |
 | 4.6 | `src/classifier/decision.ts` | P0 | new | pending | Fuse model answers + regex hits into a single `Decision`. Implements **increment**: regex `increment` deltas raise per-entity confidence and can escalate action. Applies action precedence `block > redact > flag > allow`. `OR` |
 | 4.7 | `src/classifier/coverage.ts` | P0 | adapt | pending | Selective-coverage gate: per-question confidence thresholds; above threshold auto-decide, below threshold defer (to human / allow / block per config). Reports `deferred` in the audit record. `LY` |
 | 4.8 | `src/classifier/calibration.ts` | P2 | new | pending | Temperature scaling per (question type, option count) to fix Laya's over-confidence (ECE 0.466→0.081). Table-driven, measured on local fixtures. `LY` |

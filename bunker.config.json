@@ -55,5 +55,14 @@
     "path": "~/.local/share/opencode/bunker/audit.jsonl",
     "includeRaw": false,
     "rotateBytes": 5242880
+  },
+  "classifier": {
+    "provider": "heuristic",
+    "model": "impacte/bunker-laya",
+    "dtype": "fp32",
+    "cacheDir": "~/.cache/opencode-bunker",
+    "maxLen": 1024,
+    "headMaxLen": 256,
+    "timeoutMs": 120000
   }
 }

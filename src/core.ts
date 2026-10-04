@@ -47,10 +47,19 @@ export interface BunkerConfig {
     outputRedaction: boolean
     redactArgs: boolean
     askFallback: "block" | "allow"
-    sensitivePaths: Record<string, Action>
-    credentialCommands: Record<string, Action>
+    sensitivePaths: Record<string, Action | "ask">
+    credentialCommands: Record<string, Action | "ask">
   }
   logging: { path: string; includeRaw: boolean; rotateBytes: number }
+  classifier: {
+    provider: "heuristic" | "onnx-local"
+    model: string
+    dtype: "q8" | "fp32"
+    cacheDir: string
+    maxLen: number
+    headMaxLen: number
+    timeoutMs: number
+  }
 }
 
 interface Hit {
@@ -139,6 +148,15 @@ const DEFAULT_CONFIG: BunkerConfig = {
     },
   },
   logging: { path: "~/.local/share/opencode/bunker/audit.jsonl", includeRaw: false, rotateBytes: 5 * 1024 * 1024 },
+  classifier: {
+    provider: "heuristic",
+    model: "impacte/bunker-laya",
+    dtype: "fp32",
+    cacheDir: "~/.cache/opencode-bunker",
+    maxLen: 1024,
+    headMaxLen: 256,
+    timeoutMs: 120_000,
+  },
 }
 
 const ORDER: Record<Action, number> = { allow: 0, flag: 1, redact: 2, block: 3 }
@@ -165,10 +183,11 @@ function expandHome(p: string): string {
 
 export function loadConfig(): BunkerConfig {
   let cfg: BunkerConfig = JSON.parse(JSON.stringify(DEFAULT_CONFIG))
+  // Lowest precedence first; later entries win. `$BUNKER_CONFIG` is highest.
   const candidates = [
-    process.env.BUNKER_CONFIG,
-    expandHome("~/.config/opencode/bunker.config.json"),
     join(process.cwd(), "bunker.config.json"),
+    expandHome("~/.config/opencode/bunker.config.json"),
+    process.env.BUNKER_CONFIG,
   ].filter(Boolean) as string[]
   for (const path of candidates) {
     try {
@@ -228,6 +247,8 @@ const QUESTIONS = [
   "pii_person_name",
   "pii_address",
   "injection_present",
+  "jailbreak_attempt",
+  "harmful_request",
   "confidential",
 ] as const
 
@@ -260,6 +281,8 @@ function modelProb(key: string, text: string): number {
     case "pii_person_name": return PROBE.person.test(text) ? 0.62 : 0.05
     case "pii_address": return /\d+\s+[A-Z][a-z]+\s+(Street|St|Avenue|Ave|Road|Rd)/.test(text) ? 0.7 : 0.03
     case "injection_present": return PROBE.injection.test(text) ? 0.94 : 0.03
+    case "jailbreak_attempt": return PROBE.injection.test(text) ? 0.9 : 0.03
+    case "harmful_request": return /\b(bomb|exploit|malware|ransomware|kill|weapon)\b/i.test(text) ? 0.85 : 0.03
     case "confidential": return PROBE.confidential.test(text) ? 0.55 : 0.5
     default: return 0.05
   }
@@ -268,10 +291,10 @@ function modelProb(key: string, text: string): number {
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
-export function classify(text: string): Decision {
+export function classify(text: string, modelProbs?: Record<string, number>): Decision {
   const t0 = Date.now()
   const probs: Record<string, number> = {}
-  for (const q of QUESTIONS) probs[q] = modelProb(q, text)
+  for (const q of QUESTIONS) probs[q] = modelProbs?.[q] ?? modelProb(q, text)
 
   const hits: Hit[] = []
   for (const [slug, def] of Object.entries(BUILTIN_DEFS)) {
@@ -334,6 +357,12 @@ export function classify(text: string): Decision {
   if (probs.injection_present >= config.coverage.injectionConfidence) {
     entities.push({ type: "PROMPT_INJECTION", source: "model", action: "block", count: 1, label: "[PROMPT_INJECTION]", confidence: Number(probs.injection_present.toFixed(2)) })
   }
+  if (probs.jailbreak_attempt >= config.coverage.injectionConfidence) {
+    entities.push({ type: "JAILBREAK_ATTEMPT", source: "model", action: "block", count: 1, label: "[JAILBREAK]", confidence: Number(probs.jailbreak_attempt.toFixed(2)) })
+  }
+  if (probs.harmful_request >= config.coverage.injectionConfidence) {
+    entities.push({ type: "HARMFUL_REQUEST", source: "model", action: "block", count: 1, label: "[HARMFUL]", confidence: Number(probs.harmful_request.toFixed(2)) })
+  }
 
   let action: Action = "allow"
   for (const e of entities) if (ORDER[e.action] > ORDER[action]) action = e.action
@@ -360,6 +389,61 @@ export function classify(text: string): Decision {
     latencyMs: Date.now() - t0,
     original: text,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Classifier provider (heuristic | onnx-local)
+// ---------------------------------------------------------------------------
+type ModelProvider = { predict: (text: string) => Promise<Record<string, number>>; dispose?: () => Promise<void> }
+let providerPromise: Promise<ModelProvider | null> | null = null
+
+async function getModelProvider(): Promise<ModelProvider | null> {
+  if (config.classifier.provider !== "onnx-local") return null
+  if (!providerPromise) {
+    providerPromise = (async () => {
+      try {
+        const { createOnnxLocalProvider } = await import("./classifier/onnx-local")
+        const { MODEL_QUESTIONS } = await import("./classifier/questions")
+        return await createOnnxLocalProvider({
+          model: config.classifier.model,
+          dtype: config.classifier.dtype,
+          cacheDir: config.classifier.cacheDir,
+          maxLen: config.classifier.maxLen,
+          headMaxLen: config.classifier.headMaxLen,
+          questions: MODEL_QUESTIONS,
+        })
+      } catch {
+        providerPromise = null
+        return null
+      }
+    })()
+  }
+  return providerPromise
+}
+
+/**
+ * Classify with the configured provider. `onnx-local` runs the fine-tuned Laya
+ * model in-process; on any failure it falls back to the zero-dependency
+ * heuristic (fail-open), so a missing model never breaks a turn.
+ */
+export async function classifyWithProvider(text: string): Promise<Decision> {
+  if (config.classifier.provider === "onnx-local") {
+    try {
+      const provider = await getModelProvider()
+      if (provider) {
+        const probs = await Promise.race([
+          provider.predict(text),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("classifier timeout")), config.classifier.timeoutMs)
+          ),
+        ])
+        return classify(text, probs)
+      }
+    } catch {
+      /* fail-open: fall back to the heuristic */
+    }
+  }
+  return classify(text)
 }
 
 export function redact(text: string, hits: Hit[]): string {
@@ -419,14 +503,14 @@ export function classifyTool(tool: string, args: unknown): Decision {
     for (const [glob, action] of Object.entries(config.tools.sensitivePaths)) {
       if (action === "allow") continue
       if (path && globToRegex(glob).test(path)) {
-        entities.push({ type: `SENSITIVE_PATH:${glob}`, source: "regex", action, count: 1, label: glob, confidence: 0.98 })
+        entities.push({ type: `SENSITIVE_PATH:${glob}`, source: "regex", action: action === "ask" ? "flag" : action, count: 1, label: glob, confidence: 0.98 })
       }
     }
     const command = String(a.command ?? "")
     for (const [pat, action] of Object.entries(config.tools.credentialCommands)) {
       if (action === "allow") continue
       if (command && new RegExp(pat, "i").test(command)) {
-        entities.push({ type: `CREDENTIAL_ACCESS:${pat}`, source: "regex", action, count: 1, label: pat, confidence: 0.97 })
+        entities.push({ type: `CREDENTIAL_ACCESS:${pat}`, source: "regex", action: action === "ask" ? "flag" : action, count: 1, label: pat, confidence: 0.97 })
       }
     }
     if (/\brm\s+-rf\b|drop\s+table|terraform\s+destroy/i.test(state)) {
@@ -522,7 +606,7 @@ const plugin: Plugin = async (ctx) => {
         .map((p: any) => p.text)
         .join("\n")
       if (!text) return
-      const decision = classify(text)
+      const decision = await classifyWithProvider(text)
       audit(decision, {
         hook: "chat.message",
         sessionID: inp.sessionID,
@@ -543,7 +627,7 @@ const plugin: Plugin = async (ctx) => {
         for (const p of m.parts ?? []) {
           const part = p as any
           if (part?.type !== "text" || typeof part.text !== "string" || !part.text) continue
-          const decision = classify(part.text)
+          const decision = await classifyWithProvider(part.text)
           if (decision.action === "block") {
             audit(decision, { hook: "experimental.chat.messages.transform", providerDispatched: false })
             throw blockError(decision, "messages.transform")
@@ -573,7 +657,7 @@ const plugin: Plugin = async (ctx) => {
     "tool.execute.after": async (inp, out) => {
       if (!config.tools.outputRedaction) return
       const text = typeof out.output === "string" ? out.output : ""
-      const decision = classify(text)
+      const decision = await classifyWithProvider(text)
       const scrubbed = redactOutput(redact(text, decision.hits))
       const changed = scrubbed !== text
       const canRedact = config.mode === "enforce" || config.mode === "redact"

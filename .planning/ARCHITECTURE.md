@@ -205,6 +205,15 @@ interface ToolDecision extends Decision {
 
 ## 5. Laya integration
 
+**Implemented (`onnx-local`).** The plugin runs the fine-tuned
+[`impacte/bunker-laya`](https://huggingface.co/impacte/bunker-laya) model
+in-process: Transformers.js `AutoTokenizer` for tokenization, ONNX Runtime for
+the decision graph (`src/classifier/onnx-local.ts`). It downloads + caches the
+tokenizer/config/graph, ports Laya's `build_sequence` / `_decode_answers`, and
+falls back to the heuristic on any failure (fail-open). Verified against the
+Python `laya.ONNXAgent` (identical sequences and probabilities). The `laya-http`
+transport below remains the opt-in alternative.
+
 - **Transport.** `laya-serve` exposes `POST /v1/systemone` with
   `{ state, questions }`; unknown fields are ignored; malformed questions get
   a `422`. The client sends `X-Client: opencode-bunker` and an optional
