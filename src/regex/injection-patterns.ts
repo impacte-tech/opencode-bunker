@@ -79,4 +79,15 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     pattern:
       String.raw`\b(print|show|display|give|send|dump|reveal|output|share)\b.{0,60}\b(unredacted|unmasked|in\s+plaintext|in\s+plain\s+text|raw\s+(values?|contents?))\b`,
   },
+  {
+    id: "fake-role-tag",
+    label: "[PROMPT_INJECTION]",
+    // Chat-template role forgery: user text impersonating a system/developer
+    // turn via special tokens (<|system|>, <|im_start|>, <<SYS>>, [SYSTEM]).
+    // Only high-signal role-openers are matched — user/assistant/endoftext
+    // tokens appear in benign tokenizer discussions and are not injection
+    // evidence on their own.
+    pattern:
+      String.raw`(?:<\|(?:system|developer|im_start)\|>|<<SYS>>|\[(?:SYSTEM|SYSTEM_PROMPT)\])`,
+  },
 ]

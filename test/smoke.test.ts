@@ -1,9 +1,17 @@
 import { test, expect, beforeAll } from "bun:test"
+import { writeFileSync } from "node:fs"
 import plugin, { classify, classifyTool, globToRegex, isSafeRegex, redact, redactOutput, reloadConfig } from "../src/core"
 
 beforeAll(() => {
-  // Ensure this file uses the shipped defaults, not another suite's config.
-  delete process.env.BUNKER_CONFIG
+  // Unit suite: pin the zero-dependency heuristic provider so tests stay fast
+  // and deterministic (the shipped default is onnx-local; the jailbreak E2E
+  // suite covers the model path). Also ensures this file uses its own config,
+  // not another suite's.
+  writeFileSync(
+    "./logs/bunker-smoke.config.json",
+    JSON.stringify({ classifier: { provider: "heuristic" }, logging: { path: "./logs/bunker-smoke-audit.jsonl", includeRaw: false } })
+  )
+  process.env.BUNKER_CONFIG = "./logs/bunker-smoke.config.json"
   reloadConfig()
 })
 
