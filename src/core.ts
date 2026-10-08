@@ -9,7 +9,10 @@
  *
  * Hooks used:
  *   chat.message                       -> classify + redact the input; block = revert + throw
- *   experimental.chat.messages.transform -> re-scan the exact outgoing messages
+ *   experimental.chat.messages.transform -> re-scan the exact outgoing messages;
+ *                                          downgrades any block to a redaction
+ *                                          (never throws: the message is already
+ *                                          committed and cannot be rolled back)
  *   tool.execute.before                -> block sensitive reads / credential commands
  *   tool.execute.after                 -> redact secrets/PII from tool output
  */
@@ -114,6 +117,8 @@ export interface Decision {
   hits: Hit[]
   latencyMs: number
   original: string
+  /** Which classifier produced the probabilities (fail-open fallback included). */
+  provider?: "heuristic" | "onnx-local"
 }
 
 // ---------------------------------------------------------------------------
@@ -279,9 +284,9 @@ export function isSafeRegex(pattern: string): boolean {
 // ---------------------------------------------------------------------------
 const BUILTIN_DEFS: Record<string, { question: string; label: string; pattern: string }> = {
   email: { question: "pii_email", label: "[EMAIL]", pattern: "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}" },
-  phone: { question: "pii_phone", label: "[PHONE]", pattern: "(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]\\d{3}[-.\\s]\\d{4}" },
-  ssn: { question: "pii_ssn", label: "[SSN]", pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b" },
-  "credit-card": { question: "pii_credit_card", label: "[CREDIT_CARD]", pattern: "\\b(?:\\d[ -]*?){13,16}\\b" },
+  phone: { question: "pii_phone", label: "[PHONE]", pattern: "(?<!\\d)(?:\\+\\d{1,3}[-.\\s]?)?(?:\\(\\d{3}\\)|\\d{3})[-.\\s]?\\d{3}[-.\\s]?\\d{4}(?!\\d)" },
+  ssn: { question: "pii_ssn", label: "[SSN]", pattern: "(?<!\\d)\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}(?!\\d)" },
+  "credit-card": { question: "pii_credit_card", label: "[CREDIT_CARD]", pattern: "\\b\\d{16}\\b|\\b\\d{4}[ -]\\d{6}[ -]\\d{5}\\b|\\b(?:\\d{4}[ -]){3}\\d{1,4}\\b" },
   "ip-address": { question: "pii_ip_address", label: "[IP_ADDRESS]", pattern: "\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b" },
   secrets: {
     question: "pii_secret",
@@ -292,7 +297,12 @@ const BUILTIN_DEFS: Record<string, { question: string; label: string; pattern: s
 
 const OUTPUT_SECRETS: Array<{ label: string; pattern: RegExp }> = [
   { label: "[SECRET]", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
-  { label: "[SECRET]", pattern: /\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY|ACCESS_KEY)[A-Z0-9_]*)\s*[=:]\s*["']?[^\s"']{6,}["']?/g },
+  // Generic KEY=value scrubber. The unquoted branch requires a digit and
+  // excludes code punctuation ({ } ( ) < > [ ] ; backtick) so TypeScript
+  // declarations like `OUTPUT_SECRETS: Array<{ ... }>` or `KEY: string` are
+  // not redacted in flight when this scrubs tool output (observed twice as
+  // phantom "file corruption" in reads).
+  { label: "[SECRET]", pattern: /([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY|ACCESS_KEY)[A-Z0-9_]*)\s*[=:]\s*(?:"[^"\n]{6,}"|'[^'\n]{6,}'|\[(?:SECRET|REDACTED)[^\]\n]*\]|(?=[^\s"'`{}()[\]<>;]*\d)[^\s"'`{}()[\]<>;]{6,})/g },
 ]
 
 // ---------------------------------------------------------------------------
@@ -316,9 +326,9 @@ const QUESTIONS = [
 
 const PROBE = {
   email: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/,
-  phone: /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/,
-  ssn: /\b\d{3}-\d{2}-\d{4}\b/,
-  cc: /\b(?:\d[ -]*?){13,16}\b/,
+  phone: /(?<!\d)(?:\+\d{1,3}[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)/,
+  ssn: /(?<!\d)\d{3}[-\s]?\d{2}[-\s]?\d{4}(?!\d)/,
+  cc: /\b\d{16}\b|\b\d{4}[ -]\d{6}[ -]\d{5}\b|(?:\b\d{4}[ -]){3}\d{1,4}\b/,
   ip: /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
   secret: /\b(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|sk-or-v1-[A-Za-z0-9]{32,})\b/,
   person: /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/,
@@ -529,13 +539,13 @@ export async function classifyWithProvider(text: string): Promise<Decision> {
             setTimeout(() => reject(new Error("classifier timeout")), config.classifier.timeoutMs)
           ),
         ])
-        return classify(text, probs)
+        return { ...classify(text, probs), provider: "onnx-local" }
       }
     } catch {
       /* fail-open: fall back to the heuristic */
     }
   }
-  return classify(text)
+  return { ...classify(text), provider: "heuristic" }
 }
 
 export function redact(text: string, hits: Hit[]): string {
@@ -673,6 +683,7 @@ function audit(decision: Decision, extra: Record<string, unknown>): void {
     ...extra,
     decisionId: decision.decisionId,
     decision: decision.action,
+    provider: decision.provider ?? "heuristic",
     confidence: decision.confidence,
     deferred: decision.deferred,
     entities: decision.entities.map((e) => ({ type: e.type, source: e.source, action: e.action, count: e.count, confidence: e.confidence })),
@@ -741,16 +752,28 @@ const plugin: Plugin = async (ctx) => {
     },
 
     "experimental.chat.messages.transform": async (_inp, out) => {
+      // Safety net over the exact outgoing payload. Never throws: the message
+      // is already committed to the session, so a `block` here cannot be
+      // rolled back and would brick every future dispatch in the session
+      // (re-scanned history re-triggers it forever). Instead, downgrade any
+      // block to a redaction of the payload — the provider never sees the
+      // entity, and enforcement-with-rollback stays at `chat.message`.
       for (const m of out.messages ?? []) {
         for (const p of m.parts ?? []) {
           const part = p as any
           if (part?.type !== "text" || typeof part.text !== "string" || !part.text) continue
           const decision = await classifyWithProvider(part.text)
-          if (decision.action === "block") {
-            audit(decision, { hook: "experimental.chat.messages.transform", providerDispatched: false })
-            throw blockError(decision, "messages.transform")
-          }
-          if (decision.action === "redact") part.text = redact(part.text, decision.hits)
+          if (decision.action === "allow") continue
+          // `redact()` only applies hits whose own action is "redact", so a
+          // downgraded block needs its hits forced to redact for the payload.
+          const hits =
+            decision.action === "block" ? decision.hits.map((h) => ({ ...h, action: "redact" as const })) : decision.hits
+          part.text = redact(part.text, hits)
+          audit(decision.action === "block" ? { ...decision, action: "redact" } : decision, {
+            hook: "experimental.chat.messages.transform",
+            providerDispatched: false,
+            ...(decision.action === "block" ? { downgradedFrom: "block" } : {}),
+          })
         }
       }
     },

@@ -77,6 +77,36 @@ blocked before dispatch with an audit record. Enabled globally in `flag`
   (tool never runs); `tool.execute.after` redacts output because a tool cannot
   be un-run. `permission.ask` is the human gate. See `DECISIONS.md` D14 and
   `SPEC.md` §7.
+- **2026-10-08 hardening round 2.** (1) `messages.transform` no longer throws
+  on a `block` decision — the message is already committed, so throwing
+  bricked every future dispatch of the session (observed live: 4 consecutive
+  full-history blocks). It now downgrades block → redact on the outgoing
+  payload (`downgradedFrom: "block"` in the audit record); enforcement with
+  rollback stays at `chat.message`. (2) SSN pattern widened to bare/space
+  forms (`(?<!\d)\d{3}[-\s]?\d{2}[-\s]?\d{4}(?!\d)`), phone to bare 10-digit;
+  credit-card no longer matches bare 13-digit runs (epoch-ms timestamps) —
+  bare digits must be exactly 16, separated formats 13–16. (3) The generic
+  `KEY=` output pattern requires a digit / quoted value / `[REDACTED]`
+  placeholder and excludes code punctuation, so TS declarations in tool
+  output are no longer redacted in flight (was misread twice as "file
+  corruption"). Verified: fast suites 43/43 + 15-case replay harness.
+  `test/jailbreak.test.ts` needs the cached ONNX model (~minutes) and a
+  `logs/` dir.
+- **Known model issue (found 2026-10-08, blocking onnx-in-enforce).** The
+  fine-tuned model's `injection_present` head returns ~0.98 for several
+  benign short/imperative prompts ("fix the login bug" → 0.98, "hi" → 0.98)
+  while other short prompts score ~0.02 ("read src/core.ts and find the
+  bug" → 0.03) — a training-data artifact, not length-correlated. In
+  enforce mode this blocks ordinary coding requests. Until recalibrated
+  (M6/M7), keep `classifier.provider: "heuristic"` on enforce-mode hosts;
+  the model still passes the 73-case corpus (its benign controls are
+  longer natural sentences). Also: `dtype: "q8"` is unusable — HF repo has
+  no `onnx/model.int8.onnx` (404). On 8 GB hosts, loading fp32 alongside
+  an active opencode TUI can get the server jetsam-killed (~1.26 GB RSS
+  ceiling, silent SIGKILL, surfaces as "Unexpected server error") — avoid
+  running model-heavy jobs concurrently. `audit.jsonl` now records which
+  classifier produced each decision (`provider` field) — added because
+  fail-open fallbacks were previously indistinguishable from model hits.
 
 ## Resume instructions
 
