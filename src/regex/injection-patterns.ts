@@ -30,13 +30,13 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     id: "ignore-instructions",
     label: "[PROMPT_INJECTION]",
     pattern:
-      String.raw`\b(ignore|disregard|forget|override|discard)\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier|preceding|system)\s+(instructions?|rules?|guidelines?|prompts?|directives?|messages?)\b`,
+      String.raw`\b(ignore|disregard|forget|override|discard)\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier|preceding|system|your|its|own)\s+(instructions?|rules?|guidelines?|prompts?|directives?|messages?)\b`,
   },
   {
     id: "reveal-system-prompt",
     label: "[PROMPT_INJECTION]",
     pattern:
-      String.raw`\b(reveal|show|print|output|repeat|expose|leak|disclose)\s+(me\s+)?(your\s+|the\s+)?(system\s+prompt|initial\s+prompt|hidden\s+prompt|system\s+message|instructions?)\b`,
+      String.raw`\b(reveal|show|print|output|repeat|expose|leak|disclose|share|give|send|dump)\s+(me\s+)?(your\s+|the\s+)?(system\s+prompt|initial\s+prompt|hidden\s+prompt|system\s+message|instructions?)\b`,
   },
   {
     id: "developer-mode",
@@ -66,5 +66,17 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     label: "[PROMPT_INJECTION]",
     pattern:
       String.raw`\boverride\s+(your\s+|all\s+|the\s+)?(safety|security|restrictions?|guidelines?|filters?|settings?)\b`,
+  },
+  {
+    id: "env-file-request",
+    label: "[PROMPT_INJECTION]",
+    pattern:
+      String.raw`\b(cat|type|print|read|dump|display|reveal|show|output|share)\s+(the\s+)?(\./|\~/|\.{1,2}/)*\.env\b`,
+  },
+  {
+    id: "unredacted-secrets",
+    label: "[PROMPT_INJECTION]",
+    pattern:
+      String.raw`\b(print|show|display|give|send|dump|reveal|output|share)\b.{0,60}\b(unredacted|unmasked|in\s+plaintext|in\s+plain\s+text|raw\s+(values?|contents?))\b`,
   },
 ]

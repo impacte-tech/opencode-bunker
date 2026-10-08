@@ -291,7 +291,7 @@ const BUILTIN_DEFS: Record<string, { question: string; label: string; pattern: s
 }
 
 const OUTPUT_SECRETS: Array<{ label: string; pattern: RegExp }> = [
-  { label: "[SECRET:aws-access-key-id]", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
+  { label: "[SECRET]", pattern: /\bAKIA[0-9A-Z]{16}\b/g },
   { label: "[SECRET]", pattern: /\b([A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY|ACCESS_KEY)[A-Z0-9_]*)\s*[=:]\s*["']?[^\s"']{6,}["']?/g },
 ]
 
@@ -322,7 +322,8 @@ const PROBE = {
   ip: /\b(?:\d{1,3}\.){3}\d{1,3}\b/,
   secret: /\b(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|sk-or-v1-[A-Za-z0-9]{32,})\b/,
   person: /\b[A-Z][a-z]+\s+[A-Z][a-z]+\b/,
-  injection: /\b(ignore\s+(all\s+)?previous\s+instructions|disable\s+(all\s+)?filters?|bypass\s+(all\s+)?filters?|developer\s+mode|reveal\s+your\s+system\s+prompt)\b/i,
+  injection: /\b(ignore\s+(all\s+|any\s+|your\s+)+(previous\s+|prior\s+|your\s+|its\s+|own\s+)?instructions|disable\s+(all\s+)?filters?|bypass\s+(all\s+)?filters?|developer\s+mode|(reveal|share|give|send|show|print|output)\s+(me\s+)?(your\s+|the\s+)?system\s+prompt)\b/i,
+  authority: /\b(security\s+team|incident\s+[a-z]{2,}-?\d{3,}|authorized\s+to|on\s+behalf\s+of|unredacted?|immediately)\b/i,
   confidential: /\b(confidential|internal|escalat)/i,
 }
 
@@ -345,7 +346,7 @@ function modelProb(key: string, text: string): number {
     case "injection_present": return PROBE.injection.test(text) ? 0.94 : 0.03
     case "jailbreak_attempt": return PROBE.injection.test(text) ? 0.9 : 0.03
     case "harmful_request": return /\b(bomb|exploit|malware|ransomware|kill|weapon)\b/i.test(text) ? 0.85 : 0.03
-    case "confidential": return PROBE.confidential.test(text) ? 0.55 : 0.5
+    case "confidential": return PROBE.confidential.test(text) ? 0.55 : PROBE.authority.test(text) ? 0.6 : 0.5
     default: return 0.05
   }
 }
@@ -614,15 +615,16 @@ export function classifyTool(tool: string, args: unknown): Decision {
   const entities: Entity[] = []
   const a = (args ?? {}) as Record<string, unknown>
   const path = String(a.filePath ?? a.path ?? a.file ?? "")
+  const command = String(a.command ?? "")
 
   if (config.tools.enabled) {
     for (const [glob, action] of Object.entries(config.tools.sensitivePaths)) {
       if (action === "allow") continue
-      if (path && globToRegex(glob).test(path)) {
+      const re = globToRegex(glob)
+      if ((path && re.test(path)) || (command && re.test(command))) {
         entities.push({ type: `SENSITIVE_PATH:${glob}`, source: "regex", action: action === "ask" ? "flag" : action, count: 1, label: glob, confidence: 0.98 })
       }
     }
-    const command = String(a.command ?? "")
     for (const [pat, action] of Object.entries(config.tools.credentialCommands)) {
       if (action === "allow") continue
       if (command && new RegExp(pat, "i").test(command)) {
@@ -766,6 +768,9 @@ const plugin: Plugin = async (ctx) => {
       })
       if (decision.action === "block") throw blockError(decision, `tool ${inp.tool}`)
       if (decision.action === "redact" && config.tools.redactArgs) {
+        if (/^(edit|write)$/i.test(inp.tool)) {
+          throw blockError(decision, `tool ${inp.tool}`)
+        }
         out.args = scrubValue(out.args, decision.hits)
       }
     },
