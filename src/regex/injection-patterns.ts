@@ -90,4 +90,41 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
     pattern:
       String.raw`(?:<\|(?:system|developer|im_start)\|>|<<SYS>>|\[(?:SYSTEM|SYSTEM_PROMPT)\])`,
   },
+  {
+    id: "repeat-extraction",
+    label: "[PROMPT_INJECTION]",
+    // "repeat everything above this line", "recite all of the text" — asking
+    // the model to echo prior context, a classic system-prompt extraction.
+    pattern:
+      String.raw`\b(repeat|recite|echo|reprint)\b.{0,30}\b(everything|all\s+(of\s+the\s+)?(above|text|prompt|message|instructions?|context|conversation))\b|\b(everything|all\s+of\s+the)\s+(above|before|earlier|preceding|previous|prior)\b`,
+  },
 ]
+
+/**
+ * Coarse lexical injection vocabulary, tested against
+ * {@link normalizeForLexicon}. Used by the classifier to *gate* model-only
+ * injection verdicts: the fine-tuned model over-fires on short benign dev
+ * prompts ("fix the login bug" → 0.98 injection), which share no vocabulary
+ * with real attacks. This is a corroboration signal, not an enforcement rule —
+ * `INJECTION_PATTERNS` above is the enforcement layer.
+ */
+export const INJECTION_LEXICON =
+  /\b(ignore|ignor|disregard|forget|override|instructions?|system\s*prompt|initial\s*prompt|hidden\s*prompt|system\s*message|system|reveal|expose|leak|disclose|share|give|send|show|print|output|dump|repeat|recite|echo|unrestricted|unfiltered|uncensored|jailbreak|bypass|circumvent|disable|deactivate|developer\s*mode|debug\s*mode|dan|aim|stan|dude|no\s*rules?|no\s*(content\s*)?policy|without\s+(any\s+)?(rules?|restriction\w*|filter\w*|guideline\w*|safety|limitation\w*|constraint\w*|guardrail\w*)|dont\s*refuse|do\s*not\s*refuse|must\s*comply|always\s*comply|filter\w*|restriction\w*|guideline\w*|safeguard\w*|guardrail\w*|comply|refuse|pretend|roleplay|act\s+as|behave\s+as|skeleton\s*key|pwned|new\s+conversation|reset\s+your|from\s+now\s+on|exfiltrat\w*|unredacted|plain\s*text)\b/
+
+const LEET: Record<string, string> = {
+  "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s",
+}
+
+/**
+ * Normalize text for {@link INJECTION_LEXICON} matching: NFKC, strip
+ * zero-width/format characters, fold common leetspeak substitutions, lowercase.
+ * This is how obfuscated attacks (`1gn0r3 4ll pr3v10u5 1n5truct10n5`) regain a
+ * lexical signal while ordinary prose is left intact.
+ */
+export function normalizeForLexicon(input: string): string {
+  const stripped = input.replace(/[\u200b-\u200f\u2028\u2029\u2060-\u206f\ufeff]/g, "")
+  let out = ""
+  for (const ch of stripped.normalize("NFKC")) out += LEET[ch] ?? ch
+  return out.toLowerCase()
+}
+

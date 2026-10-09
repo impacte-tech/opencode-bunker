@@ -42,7 +42,11 @@ for (const c of JAILBREAK_CORPUS) {
       fn++
       misses.push(`${c.id} [${c.technique}] action=${d.action} conf=${d.confidence}`)
     }
+  } else if (c.expect === "flag") {
+    if (d.action !== "allow") tn++
+    else misses.push(`${c.id} [${c.technique}] action=allow (expected flag/block)`)
   } else {
+    // allow | not-block
     if (!blocked) tn++
     else {
       fp++

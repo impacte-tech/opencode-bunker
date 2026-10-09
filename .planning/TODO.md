@@ -92,21 +92,26 @@ blocked before dispatch with an audit record. Enabled globally in `flag`
   corruption"). Verified: fast suites 43/43 + 15-case replay harness.
   `test/jailbreak.test.ts` needs the cached ONNX model (~minutes) and a
   `logs/` dir.
-- **Known model issue (found 2026-10-08, blocking onnx-in-enforce).** The
-  fine-tuned model's `injection_present` head returns ~0.98 for several
-  benign short/imperative prompts ("fix the login bug" → 0.98, "hi" → 0.98)
-  while other short prompts score ~0.02 ("read src/core.ts and find the
-  bug" → 0.03) — a training-data artifact, not length-correlated. In
-  enforce mode this blocks ordinary coding requests. Until recalibrated
-  (M6/M7), keep `classifier.provider: "heuristic"` on enforce-mode hosts;
-  the model still passes the 73-case corpus (its benign controls are
-  longer natural sentences). Also: `dtype: "q8"` is unusable — HF repo has
-  no `onnx/model.int8.onnx` (404). On 8 GB hosts, loading fp32 alongside
-  an active opencode TUI can get the server jetsam-killed (~1.26 GB RSS
-  ceiling, silent SIGKILL, surfaces as "Unexpected server error") — avoid
-  running model-heavy jobs concurrently. `audit.jsonl` now records which
-  classifier produced each decision (`provider` field) — added because
-  fail-open fallbacks were previously indistinguishable from model hits.
+- **Model calibration + mitigation (2026-10-08).** The fine-tuned model's
+  `injection_present` head returns ~0.98 on many short benign dev prompts
+  ("fix the login bug", "hi", "add a test for auth") — a training-data
+  artifact, not length-correlated ("read src/core.ts and find the bug" →
+  0.03). The ranking is broken (benign ≈ real attacks), so **no post-hoc rule
+  on the model's own outputs can separate them**; retraining/recalibration
+  (M6/M7) with these as targets is the real fix. Until then, `classify()`
+  **gates model-only injection/jailbreak verdicts**: corroborated by the
+  leet/zero-width-normalized `INJECTION_LEXICON` or text length ≥
+  `coverage.gateModelMinLen` (48) → block; otherwise → `flag` (audited,
+  non-blocking). Deterministic `INJECTION_PATTERNS` and `harmful_request` are
+  never gated. Measured on 60 attacks + 37 benign: block rate 97–100% vs
+  the ungated model's ~98% block **but 32% benign false positives** (0 after
+  the gate). Toggle via `coverage.gateModelInjection` (default true). The 12
+  misfires live in the corpus as `expect: "not-block"` (id `benign-dev-*`).
+  Other findings: `dtype: "q8"` is unusable (HF has no `onnx/model.int8.onnx`
+  → 404); on 8 GB hosts fp32 alongside an active TUI can be jetsam-killed at
+  ~1.26 GB RSS (silent SIGKILL → "Unexpected server error"); `audit.jsonl`
+  now records `provider` (heuristic vs onnx-local) so fail-open fallbacks are
+  distinguishable from model verdicts.
 
 ## Resume instructions
 

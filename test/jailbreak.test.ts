@@ -49,6 +49,8 @@ for (const c of JAILBREAK_CORPUS) {
       expect(action).toBe("block")
     } else if (c.expect === "flag") {
       expect(action).not.toBe("allow")
+    } else if (c.expect === "not-block") {
+      expect(action).not.toBe("block")
     } else {
       expect(action).toBe("allow")
     }
@@ -62,7 +64,7 @@ test("corpus summary: block rate >= 95% and no benign false positives", () => {
   let benign = 0
   for (const c of JAILBREAK_CORPUS) {
     const action = actions.get(c.id)
-    if (c.expect === "allow") {
+    if (c.expect === "allow" || c.expect === "not-block") {
       benign++
       if (action !== "block") benignAllowed++
     } else {

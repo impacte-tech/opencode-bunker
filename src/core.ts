@@ -28,7 +28,7 @@ import {
   type SecretPattern,
 } from "./regex/engine"
 import { SECRET_PATTERNS } from "./regex/secret-patterns"
-import { INJECTION_PATTERNS } from "./regex/injection-patterns"
+import { INJECTION_PATTERNS, INJECTION_LEXICON, normalizeForLexicon } from "./regex/injection-patterns"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,7 +51,21 @@ export interface BunkerConfig {
   allowRemote: boolean
   builtins: Record<string, Action>
   custom: CustomPattern[]
-  coverage: { minConfidence: number; injectionConfidence: number; deferTo: "human" | "allow" | "block" }
+  coverage: {
+    minConfidence: number
+    injectionConfidence: number
+    deferTo: "human" | "allow" | "block"
+    /**
+     * Gate model-only prompt-injection/jailbreak verdicts on a lexical
+     * corroboration signal (or a minimum length). The fine-tuned model
+     * over-fires on short benign dev prompts; without this gate, enforce mode
+     * blocks ordinary requests ("fix the login bug"). Deterministic
+     * `INJECTION_PATTERNS` and `harmful_request` are never gated.
+     */
+    gateModelInjection: boolean
+    /** Text length at/above which model verdicts are trusted without lexicon. */
+    gateModelMinLen: number
+  }
   tools: {
     enabled: boolean
     defaultAction: Action
@@ -143,7 +157,7 @@ const DEFAULT_CONFIG: BunkerConfig = {
     { pattern: "PROJ-\\d{4,6}", action: "redact", label: "internal-project-code", increment: 0.25, target: "confidential" },
     { pattern: "AKIA[0-9A-Z]{16}", action: "block", label: "aws-access-key", increment: 0.5, target: "pii_secret", force: true },
   ],
-  coverage: { minConfidence: 0.75, injectionConfidence: 0.8, deferTo: "human" },
+  coverage: { minConfidence: 0.75, injectionConfidence: 0.8, deferTo: "human", gateModelInjection: true, gateModelMinLen: 48 },
   tools: {
     enabled: true,
     defaultAction: "flag",
@@ -453,11 +467,25 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
       deferredEntities.push({ type: c.type, source: "model", action: "flag", count: 1, label: c.label, confidence: Number(p.toFixed(2)) })
     }
   }
+  // Gate model-only injection/jailbreak verdicts. The fine-tuned model
+  // over-fires on short benign dev prompts ("fix the login bug" → 0.98) that
+  // share no vocabulary with real attacks, so an uncorroborated model verdict
+  // is downgraded to `flag` (visible/audited, non-blocking) rather than
+  // trusted. Corroboration = lexical injection signal (leet/zero-width
+  // normalized) or a broadly in-distribution length. Allowed to be disabled
+  // via config for hosts that trust the model. `harmful_request` is never
+  // gated: it does not misfire on dev prompts and covers clearly harmful asks.
+  let injectionAction: Action = "block"
+  if (config.coverage.gateModelInjection) {
+    const len = scanText.length
+    const corroborated = len >= config.coverage.gateModelMinLen || INJECTION_LEXICON.test(normalizeForLexicon(scanText))
+    if (!corroborated) injectionAction = "flag"
+  }
   if (probs.injection_present >= config.coverage.injectionConfidence) {
-    entities.push({ type: "PROMPT_INJECTION", source: "model", action: "block", count: 1, label: "[PROMPT_INJECTION]", confidence: Number(probs.injection_present.toFixed(2)) })
+    entities.push({ type: "PROMPT_INJECTION", source: "model", action: injectionAction, count: 1, label: "[PROMPT_INJECTION]", confidence: Number(probs.injection_present.toFixed(2)) })
   }
   if (probs.jailbreak_attempt >= config.coverage.injectionConfidence) {
-    entities.push({ type: "JAILBREAK_ATTEMPT", source: "model", action: "block", count: 1, label: "[JAILBREAK]", confidence: Number(probs.jailbreak_attempt.toFixed(2)) })
+    entities.push({ type: "JAILBREAK_ATTEMPT", source: "model", action: injectionAction, count: 1, label: "[JAILBREAK]", confidence: Number(probs.jailbreak_attempt.toFixed(2)) })
   }
   if (probs.harmful_request >= config.coverage.injectionConfidence) {
     entities.push({ type: "HARMFUL_REQUEST", source: "model", action: "block", count: 1, label: "[HARMFUL]", confidence: Number(probs.harmful_request.toFixed(2)) })
