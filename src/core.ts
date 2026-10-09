@@ -28,7 +28,7 @@ import {
   type SecretPattern,
 } from "./regex/engine"
 import { SECRET_PATTERNS } from "./regex/secret-patterns"
-import { INJECTION_PATTERNS, INJECTION_LEXICON, normalizeForLexicon } from "./regex/injection-patterns"
+import { INJECTION_PATTERNS, HARMFUL_PATTERNS, INJECTION_LEXICON, normalizeForLexicon } from "./regex/injection-patterns"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -157,7 +157,10 @@ const DEFAULT_CONFIG: BunkerConfig = {
     { pattern: "PROJ-\\d{4,6}", action: "redact", label: "internal-project-code", increment: 0.25, target: "confidential" },
     { pattern: "AKIA[0-9A-Z]{16}", action: "block", label: "aws-access-key", increment: 0.5, target: "pii_secret", force: true },
   ],
-  coverage: { minConfidence: 0.75, injectionConfidence: 0.8, deferTo: "human", gateModelInjection: true, gateModelMinLen: 48 },
+  // gateModelInjection is off by default now that `impacte/bunker-laya` v5
+  // fixed the short-benign-prompt over-firing (D14/D15). Kept as an opt-in
+  // fallback for hosts pinned to an older checkpoint.
+  coverage: { minConfidence: 0.75, injectionConfidence: 0.8, deferTo: "human", gateModelInjection: false, gateModelMinLen: 48 },
   tools: {
     enabled: true,
     defaultAction: "flag",
@@ -369,7 +372,7 @@ function modelProb(key: string, text: string): number {
     case "pii_address": return /\d+\s+[A-Z][a-z]+\s+(Street|St|Avenue|Ave|Road|Rd)/.test(text) ? 0.7 : 0.03
     case "injection_present": return PROBE.injection.test(text) ? 0.94 : 0.03
     case "jailbreak_attempt": return PROBE.injection.test(text) ? 0.9 : 0.03
-    case "harmful_request": return /\b(bomb|exploit|malware|ransomware|kill|weapon)\b/i.test(text) ? 0.85 : 0.03
+    case "harmful_request": return HARMFUL_PATTERNS.some((p) => new RegExp(p.pattern, "i").test(text)) ? 0.9 : 0.03
     case "confidential": return PROBE.confidential.test(text) ? 0.55 : PROBE.authority.test(text) ? 0.6 : 0.5
     default: return 0.05
   }
@@ -434,6 +437,14 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
       hits.push({ id: p.id, question: "injection_present", action: "block", label: p.label, pattern: re, count })
     }
   }
+  // deterministic harmful-request patterns (always block; model backstop)
+  for (const p of HARMFUL_PATTERNS) {
+    const re = new RegExp(p.pattern, "gi")
+    const count = (scanText.match(re) ?? []).length
+    if (count) {
+      hits.push({ id: p.id, question: "harmful_request", action: "block", label: p.label, pattern: re, count })
+    }
+  }
 
   const incremented = new Set<string>()
   const regexIncrements: Decision["regexIncrements"] = []
@@ -467,14 +478,14 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
       deferredEntities.push({ type: c.type, source: "model", action: "flag", count: 1, label: c.label, confidence: Number(p.toFixed(2)) })
     }
   }
-  // Gate model-only injection/jailbreak verdicts. The fine-tuned model
-  // over-fires on short benign dev prompts ("fix the login bug" → 0.98) that
-  // share no vocabulary with real attacks, so an uncorroborated model verdict
-  // is downgraded to `flag` (visible/audited, non-blocking) rather than
-  // trusted. Corroboration = lexical injection signal (leet/zero-width
-  // normalized) or a broadly in-distribution length. Allowed to be disabled
-  // via config for hosts that trust the model. `harmful_request` is never
-  // gated: it does not misfire on dev prompts and covers clearly harmful asks.
+  // Optional gate on model-only injection/jailbreak verdicts. Disabled by
+  // default: `impacte/bunker-laya` v5 (2026-10-09) fixed the short-prompt
+  // over-firing ("hi" / "fix the login bug" now score <0.01; gates PASS), so
+  // the model verdict can be trusted directly. The mechanism is kept as an
+  // opt-in fallback (`coverage.gateModelInjection: true`) for hosts pinned to
+  // an older checkpoint; corroboration = lexical injection signal
+  // (leet/zero-width normalized) or a broadly in-distribution length.
+  // `harmful_request` is never gated.
   let injectionAction: Action = "block"
   if (config.coverage.gateModelInjection) {
     const len = scanText.length

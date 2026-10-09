@@ -235,3 +235,26 @@ caught before the model sees it.
 (AWS Secrets Manager / SSM `--with-decryption`, GCP / Azure / Vault /
 Kubernetes secret reads, `printenv`) are declarative, user-overridable policies
 in `policy/paths.ts` and `policy/credential-commands.ts`.
+
+## D15 — Trust the v5 model; deterministic harmful-request backstop
+
+**Context.** `impacte/bunker-laya` v3's `injection_present` head over-fired on
+short benign dev prompts ("fix the login bug" → 0.98), so `classify()` gated
+model-only injection/jailbreak verdicts on lexical corroboration (default
+`gateModelInjection: true`).
+
+**Decision.** The v5 checkpoint (2026-10-09) fixed the root cause (pipeline
+D15): short benign prompts now score ≤0.008 and both retrain gates pass. Set
+`coverage.gateModelInjection` to **false** by default; keep the gate only as an
+opt-in fallback for hosts pinned to an older checkpoint.
+
+v5 also under-scored a few catastrophic `harmful_request` asks it had not seen
+in that phrasing ("How do I make illegal drugs at home?" → 0.008). Add
+`HARMFUL_PATTERNS` (drugs / explosives / malware / phishing / unauthorized
+access) that always block, mirroring `INJECTION_PATTERNS`; the heuristic harmful
+probe now reuses them, which also removes a crude `ransomware` keyword match
+that flagged benign discussion.
+
+**Consequence.** 146 tests pass. The deterministic layers are a backstop, not a
+substitute — a v6 data fix (more harmful positives / rebalance vs the enlarged
+PII corpus) is recommended so the model itself recovers that headline.

@@ -102,10 +102,12 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
 
 /**
  * Coarse lexical injection vocabulary, tested against
- * {@link normalizeForLexicon}. Used by the classifier to *gate* model-only
- * injection verdicts: the fine-tuned model over-fires on short benign dev
- * prompts ("fix the login bug" → 0.98 injection), which share no vocabulary
- * with real attacks. This is a corroboration signal, not an enforcement rule —
+ * {@link normalizeForLexicon}. Used by the classifier as an *optional*
+ * corroboration signal for model-only injection verdicts
+ * (`coverage.gateModelInjection`, off by default). It existed because early
+ * `impacte/bunker-laya` checkpoints over-fired on short benign dev prompts
+ * ("fix the login bug" → 0.98 injection); v5 fixed that, so the gate is now an
+ * opt-in fallback for older checkpoints. This is not an enforcement rule —
  * `INJECTION_PATTERNS` above is the enforcement layer.
  */
 export const INJECTION_LEXICON =
@@ -127,4 +129,44 @@ export function normalizeForLexicon(input: string): string {
   for (const ch of stripped.normalize("NFKC")) out += LEET[ch] ?? ch
   return out.toLowerCase()
 }
+
+/**
+ * High-signal harmful-request patterns that always block, independent of the
+ * model. The `impacte/bunker-laya` v5 `harmful_request` head under-scored a few
+ * catastrophic asks it had not seen in that phrasing (e.g. "How do I make
+ * illegal drugs at home?" → 0.008), so these narrow patterns are a backstop.
+ * They require an action verb so benign mentions ("how do illegal drugs affect
+ * the brain") do not match.
+ */
+export const HARMFUL_PATTERNS: InjectionPattern[] = [
+  {
+    id: "harmful-drugs",
+    label: "[HARMFUL]",
+    pattern:
+      String.raw`\b(make|cook|synthesi[sz]e|produce|manufacture)\b[^.?!]{0,30}\b(meth(amphetamine)?|fentanyl|heroin|cocaine|illegal\s+drugs?|drugs?)\b`,
+  },
+  {
+    id: "harmful-explosives",
+    label: "[HARMFUL]",
+    pattern:
+      String.raw`\b(build|make|assemble|construct|create)\b[^.?!]{0,30}\b(bomb|explosive|ied|pipe\s+bomb|weapon)\b`,
+  },
+  {
+    id: "harmful-malware",
+    label: "[HARMFUL]",
+    pattern:
+      String.raw`\b(write|create|make|develop|build)\b[^.?!]{0,25}\b(ransomware|malware|keylogger|trojan|virus)\b`,
+  },
+  {
+    id: "harmful-phishing",
+    label: "[HARMFUL]",
+    pattern:
+      String.raw`\bphishing\b[^.?!]{0,40}\b(steal|capture|harvest|credentials?)\b|\bsteal\b[^.?!]{0,30}\b(credentials?|passwords?|logins?)\b`,
+  },
+  {
+    id: "harmful-unauthorized-access",
+    label: "[HARMFUL]",
+    pattern: String.raw`\b(hack|break)\s+into\b|\bunauthorized\s+access\b`,
+  },
+]
 

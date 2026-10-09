@@ -20,7 +20,8 @@
   "coverage": {
     "minConfidence": 0.75,
     "injectionConfidence": 0.8,
-    "deferTo": "human"
+    "deferTo": "human",
+    "gateModelInjection": false
   },
   "tools": {
     "enabled": true,

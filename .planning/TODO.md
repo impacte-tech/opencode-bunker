@@ -92,26 +92,28 @@ blocked before dispatch with an audit record. Enabled globally in `flag`
   corruption"). Verified: fast suites 43/43 + 15-case replay harness.
   `test/jailbreak.test.ts` needs the cached ONNX model (~minutes) and a
   `logs/` dir.
-- **Model calibration + mitigation (2026-10-08).** The fine-tuned model's
-  `injection_present` head returns ~0.98 on many short benign dev prompts
-  ("fix the login bug", "hi", "add a test for auth") — a training-data
-  artifact, not length-correlated ("read src/core.ts and find the bug" →
-  0.03). The ranking is broken (benign ≈ real attacks), so **no post-hoc rule
-  on the model's own outputs can separate them**; retraining/recalibration
-  (M6/M7) with these as targets is the real fix. Until then, `classify()`
-  **gates model-only injection/jailbreak verdicts**: corroborated by the
-  leet/zero-width-normalized `INJECTION_LEXICON` or text length ≥
-  `coverage.gateModelMinLen` (48) → block; otherwise → `flag` (audited,
-  non-blocking). Deterministic `INJECTION_PATTERNS` and `harmful_request` are
-  never gated. Measured on 60 attacks + 37 benign: block rate 97–100% vs
-  the ungated model's ~98% block **but 32% benign false positives** (0 after
-  the gate). Toggle via `coverage.gateModelInjection` (default true). The 12
-  misfires live in the corpus as `expect: "not-block"` (id `benign-dev-*`).
-  Other findings: `dtype: "q8"` is unusable (HF has no `onnx/model.int8.onnx`
-  → 404); on 8 GB hosts fp32 alongside an active TUI can be jetsam-killed at
-  ~1.26 GB RSS (silent SIGKILL → "Unexpected server error"); `audit.jsonl`
-  now records `provider` (heuristic vs onnx-local) so fail-open fallbacks are
-  distinguishable from model verdicts.
+- **Model calibration + mitigation (2026-10-08, resolved 2026-10-09).** The v3
+  model's `injection_present` head returned ~0.98 on many short benign dev
+  prompts ("fix the login bug", "hi") — a training-data artifact caused by
+  ~1,700 ultra-short injection-*positive* rows (mostly Mosscap blanket-label-1
+  noise), so no post-hoc rule on the model's outputs could separate benign from
+  attacks. v3 shipped a mitigation: `classify()` gated model-only
+  injection/jailbreak verdicts on `INJECTION_LEXICON` / length. **v5 fixed the
+  root cause** in `opencode-bunker-laya` (D15: dropped signal-free short
+  positives, added 1,309 real short benign turns from `OpenAssistant/oasst1`).
+  `impacte/bunker-laya` v5 now scores ≤0.008 on those prompts and both retrain
+  gates pass, so the gate is **off by default**
+  (`coverage.gateModelInjection: false`) and kept only as an opt-in fallback for
+  hosts pinned to an older checkpoint. The historically-failing prompts remain
+  in the corpus as `expect: "not-block"` (id `benign-dev-*`). Other findings:
+  `dtype: "q8"` is unusable (the repo ships no `onnx/model.int8.onnx`); on 8 GB
+  hosts fp32 alongside an active TUI can be jetsam-killed at ~1.26 GB RSS;
+  `audit.jsonl` records `provider` so fail-open fallbacks are distinguishable.
+  v5 also **under-scored some `harmful_request` phrasings** (e.g. "How do I make
+  illegal drugs at home?" → 0.008), so `HARMFUL_PATTERNS` now blocks the
+  catastrophic categories deterministically (and the heuristic harmful probe
+  reuses them). A pipeline v6 data fix is recommended to restore that headline
+  in the model itself.
 
 ## Resume instructions
 

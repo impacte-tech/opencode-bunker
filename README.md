@@ -449,13 +449,17 @@ test/
 - **112-pattern secret engine** (opencode-redact parity): keyword pre-filter,
   invisible-Unicode stripping, deep traversal (image/base64-safe), path-based
   redaction, string cache.
-- Heuristic classifier and the `onnx-local` provider (`impacte/bunker-laya`).
+- Heuristic classifier and the `onnx-local` provider
+  ([`impacte/bunker-laya`](https://huggingface.co/impacte/bunker-laya) v5, fixed
+  for the short-prompt injection over-firing).
+- Deterministic model backstops: `INJECTION_PATTERNS` (jailbreak/override) and
+  `HARMFUL_PATTERNS` (drugs/explosives/malware/phishing/unauthorized access).
 - All four hooks, rollback, action precedence, modes, coverage gate.
 - Tool-call guardrails (sensitive paths, credential commands, destructive
   actions, output redaction).
 - JSONL audit log with the pre-provider proof fields.
-- 113 tests: 10 unit/hook, 12 secret/heuristic, 21 injection-pattern, 68-case
-  jailbreak E2E, plus 2 end-to-end scripts.
+- 146 tests: unit/hook, secret/heuristic, injection + harmful patterns, and a
+  85-case jailbreak/injection E2E suite, plus end-to-end scripts.
 
 **Pending** (tracked in [`.planning/FILEMAP.md`](./.planning/FILEMAP.md))
 - `laya-http` transport (opt-in remote/sidecar classifier).
