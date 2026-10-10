@@ -450,9 +450,10 @@ test/
   invisible-Unicode stripping, deep traversal (image/base64-safe), path-based
   redaction, string cache.
 - Heuristic classifier and the `onnx-local` provider
-  ([`impacte/bunker-laya`](https://huggingface.co/impacte/bunker-laya) v6).
-  Model-only injection/jailbreak verdicts are gated on lexical corroboration:
-  the head still over-fires on benign account/UI text (see `.planning/DECISIONS.md` D15).
+  ([`impacte/bunker-laya`](https://huggingface.co/impacte/bunker-laya) v7).
+  Model-only injection/jailbreak verdicts are gated on lexical corroboration;
+  v7 fixed the benign account/UI over-firing, so the gate is now cheap insurance
+  rather than a workaround (see `.planning/DECISIONS.md` D15).
 - Deterministic model backstops: `INJECTION_PATTERNS` (jailbreak/override) and
   `HARMFUL_PATTERNS` (drugs/explosives/malware/phishing/unauthorized access).
 - All four hooks, rollback, action precedence, modes, coverage gate.

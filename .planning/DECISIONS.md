@@ -243,14 +243,13 @@ short benign dev prompts ("fix the login bug" → 0.98), so `classify()` gated
 model-only injection/jailbreak verdicts on lexical corroboration (default
 `gateModelInjection: true`).
 
-**Decision.** The gate **stays on by default**. v5/v6 fixed the short
-dev-prompt flood (those now score <0.02), but the injection head still
-over-fires on benign account/UI text ("The password field is required." → 0.98)
-even when those exact strings are trained as negatives — the attack corpus's
-credential-extraction prompts dominate that feature. Measured: the gate
-downgrades those uncorroborated verdicts to `flag` while downgrading **zero**
-real attacks in the 65-case corpus, so `coverage.gateModelInjection` remains
-`true`.
+**Decision.** The gate **stays on by default**, as cheap insurance. v5/v6 fixed
+the short dev-prompt flood; **v7** (via ~640 synthetic UI strings + 15k
+`clinc_oos` utterances) fixed the benign account/UI over-firing too — those
+strings now score ~0.01. The gate is retained because it costs nothing
+measurable (it downgrades uncorroborated short model verdicts while downgrading
+**zero** real attacks in the 65-case corpus) and protects against the next
+unseen benign family. `coverage.gateModelInjection: true`.
 
 v5 also under-scored a few catastrophic `harmful_request` asks it had not seen
 in that phrasing ("How do I make illegal drugs at home?" → 0.008). Add
@@ -259,6 +258,7 @@ access) that always block, mirroring `INJECTION_PATTERNS`; the heuristic harmful
 probe now reuses them, which also removes a crude `ransomware` keyword match
 that flagged benign discussion.
 
-**Consequence.** 146 tests pass. The deterministic layers are a backstop, not a
-substitute — a v6 data fix (more harmful positives / rebalance vs the enlarged
-PII corpus) is recommended so the model itself recovers that headline.
+**Consequence.** 148 tests pass. Current model: `impacte/bunker-laya` **v7**
+(fp32 + fp16). The deterministic layers are a backstop, not a
+substitute; the one remaining model gap (a harmful phrasing) is covered by
+`HARMFUL_PATTERNS`, and v8 targets it in the model itself.
