@@ -283,7 +283,7 @@ live in [`bunker.config.json`](./bunker.config.json); the full reference is in
   "classifier": {
     "provider": "heuristic",      // heuristic | onnx-local
     "model": "impacte/bunker-laya",
-    "dtype": "fp32",              // fp32 (correct) | q8 (INT8, degraded)
+    "dtype": "fp32",              // fp32 | fp16 (half size, lossless) | q8 (INT8, collapses the head)
     "cacheDir": "~/.cache/opencode-bunker",
     "maxLen": 1024,
     "headMaxLen": 256,
@@ -316,7 +316,7 @@ single forward pass:
 "classifier": {
   "provider": "onnx-local",
   "model": "impacte/bunker-laya",
-  "dtype": "fp32",              // fp32 is correct; q8 (INT8) degrades the PII head
+  "dtype": "fp32",              // fp32 | fp16 (lossless, ~0.85 GB, recommended on 8 GB hosts); q8 collapses the head
   "cacheDir": "~/.cache/opencode-bunker",
   "maxLen": 1024,
   "headMaxLen": 256,
@@ -325,8 +325,9 @@ single forward pass:
 ```
 
 On first use the provider downloads the tokenizer, config and ONNX graph
-(~1.6 GB, cached under `cacheDir`) and runs it **in-process** — no Python
-sidecar. If the model is missing or fails, the plugin falls back to the
+(`~1.6 GB` for `fp32`, `~0.85 GB` for `fp16`, cached under `cacheDir`) and runs
+it **in-process** — no Python sidecar. If the model is missing or fails, the
+plugin falls back to the
 heuristic (fail-open) so a turn is never broken.
 
 ### GPU acceleration

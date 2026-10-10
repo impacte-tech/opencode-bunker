@@ -88,7 +88,7 @@ export interface BunkerConfig {
   classifier: {
     provider: "heuristic" | "onnx-local"
     model: string
-    dtype: "q8" | "fp32"
+    dtype: "q8" | "fp32" | "fp16"
     cacheDir: string
     maxLen: number
     headMaxLen: number

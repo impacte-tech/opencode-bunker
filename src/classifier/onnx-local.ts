@@ -29,8 +29,8 @@ export interface OnnxQuestion {
 export interface OnnxLocalOptions {
   /** Hugging Face repo id, e.g. `impacte/bunker-laya`. */
   model: string
-  /** Which ONNX file to use: `q8` -> model.int8.onnx, `fp32` -> model.onnx. */
-  dtype?: "q8" | "fp32"
+  /** Which ONNX file to use: `q8` -> model.int8.onnx, `fp32` -> model.onnx, `fp16` -> model.fp16.onnx. */
+  dtype?: "q8" | "fp32" | "fp16"
   /** Cache directory (default `~/.cache/opencode-bunker`). */
   cacheDir?: string
   /** Model context length (from rl_agent_config.json). */
@@ -166,7 +166,8 @@ export async function createOnnxLocalProvider(
   const dtype = options.dtype ?? "fp32"
   const cacheRoot = expandHome(options.cacheDir ?? "~/.cache/opencode-bunker")
   const dir = join(cacheRoot, slug(options.model))
-  const onnxRel = dtype === "fp32" ? "onnx/model.onnx" : "onnx/model.int8.onnx"
+  const onnxRel =
+    dtype === "fp32" ? "onnx/model.onnx" : dtype === "fp16" ? "onnx/model.fp16.onnx" : "onnx/model.int8.onnx"
   const onnxPath = join(dir, onnxRel)
   const tokDir = join(dir, "tokenizer")
   const cfgPath = join(dir, "rl_agent_config.json")
@@ -184,6 +185,8 @@ export async function createOnnxLocalProvider(
   await downloadFile(`${base}/${onnxRel}`, onnxPath, options.onProgress)
   if (dtype === "fp32") {
     await downloadFile(`${base}/onnx/model.onnx.data`, join(dir, "onnx/model.onnx.data"), options.onProgress)
+  } else if (dtype === "fp16") {
+    await downloadFile(`${base}/onnx/model.fp16.onnx.data`, join(dir, "onnx/model.fp16.onnx.data"), options.onProgress)
   }
 
   const { AutoTokenizer } = await import("@huggingface/transformers")
