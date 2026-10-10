@@ -21,7 +21,7 @@
     "minConfidence": 0.75,
     "injectionConfidence": 0.8,
     "deferTo": "human",
-    "gateModelInjection": false
+    "gateModelInjection": true
   },
   "tools": {
     "enabled": true,

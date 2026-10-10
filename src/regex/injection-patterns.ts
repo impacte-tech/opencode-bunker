@@ -102,13 +102,12 @@ export const INJECTION_PATTERNS: InjectionPattern[] = [
 
 /**
  * Coarse lexical injection vocabulary, tested against
- * {@link normalizeForLexicon}. Used by the classifier as an *optional*
- * corroboration signal for model-only injection verdicts
- * (`coverage.gateModelInjection`, off by default). It existed because early
- * `impacte/bunker-laya` checkpoints over-fired on short benign dev prompts
- * ("fix the login bug" → 0.98 injection); v5 fixed that, so the gate is now an
- * opt-in fallback for older checkpoints. This is not an enforcement rule —
- * `INJECTION_PATTERNS` above is the enforcement layer.
+ * {@link normalizeForLexicon}. Used by the classifier to gate model-only
+ * injection verdicts (`coverage.gateModelInjection`, on by default): the head
+ * still over-fires on benign account/UI text ("The password field is
+ * required." → 0.98) even after the v5/v6 retrains. This is a corroboration
+ * signal, not an enforcement rule — `INJECTION_PATTERNS` above is the
+ * enforcement layer.
  */
 export const INJECTION_LEXICON =
   /\b(ignore|ignor|disregard|forget|override|instructions?|system\s*prompt|initial\s*prompt|hidden\s*prompt|system\s*message|system|reveal|expose|leak|disclose|share|give|send|show|print|output|dump|repeat|recite|echo|unrestricted|unfiltered|uncensored|jailbreak|bypass|circumvent|disable|deactivate|developer\s*mode|debug\s*mode|dan|aim|stan|dude|no\s*rules?|no\s*(content\s*)?policy|without\s+(any\s+)?(rules?|restriction\w*|filter\w*|guideline\w*|safety|limitation\w*|constraint\w*|guardrail\w*)|dont\s*refuse|do\s*not\s*refuse|must\s*comply|always\s*comply|filter\w*|restriction\w*|guideline\w*|safeguard\w*|guardrail\w*|comply|refuse|pretend|roleplay|act\s+as|behave\s+as|skeleton\s*key|pwned|new\s+conversation|reset\s+your|from\s+now\s+on|exfiltrat\w*|unredacted|plain\s*text)\b/

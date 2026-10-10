@@ -157,10 +157,12 @@ const DEFAULT_CONFIG: BunkerConfig = {
     { pattern: "PROJ-\\d{4,6}", action: "redact", label: "internal-project-code", increment: 0.25, target: "confidential" },
     { pattern: "AKIA[0-9A-Z]{16}", action: "block", label: "aws-access-key", increment: 0.5, target: "pii_secret", force: true },
   ],
-  // gateModelInjection is off by default now that `impacte/bunker-laya` v5
-  // fixed the short-benign-prompt over-firing (D14/D15). Kept as an opt-in
-  // fallback for hosts pinned to an older checkpoint.
-  coverage: { minConfidence: 0.75, injectionConfidence: 0.8, deferTo: "human", gateModelInjection: false, gateModelMinLen: 48 },
+  // gateModelInjection stays ON. v5/v6 fixed the short dev-prompt flood, but
+  // the injection head still over-fires on benign account/UI text
+  // ("The password field is required." -> 0.98). The gate downgrades those
+  // uncorroborated model verdicts to `flag` without downgrading any real attack
+  // in the corpus. See D15.
+  coverage: { minConfidence: 0.75, injectionConfidence: 0.8, deferTo: "human", gateModelInjection: true, gateModelMinLen: 48 },
   tools: {
     enabled: true,
     defaultAction: "flag",
@@ -478,14 +480,14 @@ export function classify(text: string, modelProbs?: Record<string, number>): Dec
       deferredEntities.push({ type: c.type, source: "model", action: "flag", count: 1, label: c.label, confidence: Number(p.toFixed(2)) })
     }
   }
-  // Optional gate on model-only injection/jailbreak verdicts. Disabled by
-  // default: `impacte/bunker-laya` v5 (2026-10-09) fixed the short-prompt
-  // over-firing ("hi" / "fix the login bug" now score <0.01; gates PASS), so
-  // the model verdict can be trusted directly. The mechanism is kept as an
-  // opt-in fallback (`coverage.gateModelInjection: true`) for hosts pinned to
-  // an older checkpoint; corroboration = lexical injection signal
-  // (leet/zero-width normalized) or a broadly in-distribution length.
-  // `harmful_request` is never gated.
+  // Gate on model-only injection/jailbreak verdicts (enabled by default). The
+  // injection head still over-fires on benign account/UI text (e.g. "The
+  // password field is required." -> 0.98) that shares no vocabulary with real
+  // attacks, so an uncorroborated model verdict is downgraded to `flag`
+  // (visible/audited, non-blocking) rather than trusted. Corroboration = lexical
+  // injection signal (leet/zero-width normalized) or a broadly in-distribution
+  // length. Measured: this fixes the benign FPs without downgrading any real
+  // attack in the corpus. `harmful_request` is never gated.
   let injectionAction: Action = "block"
   if (config.coverage.gateModelInjection) {
     const len = scanText.length

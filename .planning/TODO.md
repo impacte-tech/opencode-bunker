@@ -92,28 +92,24 @@ blocked before dispatch with an audit record. Enabled globally in `flag`
   corruption"). Verified: fast suites 43/43 + 15-case replay harness.
   `test/jailbreak.test.ts` needs the cached ONNX model (~minutes) and a
   `logs/` dir.
-- **Model calibration + mitigation (2026-10-08, resolved 2026-10-09).** The v3
-  model's `injection_present` head returned ~0.98 on many short benign dev
-  prompts ("fix the login bug", "hi") — a training-data artifact caused by
-  ~1,700 ultra-short injection-*positive* rows (mostly Mosscap blanket-label-1
-  noise), so no post-hoc rule on the model's outputs could separate benign from
-  attacks. v3 shipped a mitigation: `classify()` gated model-only
-  injection/jailbreak verdicts on `INJECTION_LEXICON` / length. **v5 fixed the
-  root cause** in `opencode-bunker-laya` (D15: dropped signal-free short
-  positives, added 1,309 real short benign turns from `OpenAssistant/oasst1`).
-  `impacte/bunker-laya` v5 now scores ≤0.008 on those prompts and both retrain
-  gates pass, so the gate is **off by default**
-  (`coverage.gateModelInjection: false`) and kept only as an opt-in fallback for
-  hosts pinned to an older checkpoint. The historically-failing prompts remain
-  in the corpus as `expect: "not-block"` (id `benign-dev-*`). Other findings:
-  `dtype: "q8"` is unusable (the repo ships no `onnx/model.int8.onnx`); on 8 GB
-  hosts fp32 alongside an active TUI can be jetsam-killed at ~1.26 GB RSS;
-  `audit.jsonl` records `provider` so fail-open fallbacks are distinguishable.
-  v5 also **under-scored some `harmful_request` phrasings** (e.g. "How do I make
-  illegal drugs at home?" → 0.008), so `HARMFUL_PATTERNS` now blocks the
-  catastrophic categories deterministically (and the heuristic harmful probe
-  reuses them). A pipeline v6 data fix is recommended to restore that headline
-  in the model itself.
+- **Model calibration + mitigation (2026-10-08 → 2026-10-10).** The v3
+  `injection_present` head returned ~0.98 on many short benign dev prompts
+  ("fix the login bug", "hi") — caused by ~1,700 ultra-short injection-*positive*
+  rows (mostly Mosscap blanket-label-1 noise). v3 shipped a mitigation:
+  `classify()` gates model-only injection/jailbreak verdicts on
+  `INJECTION_LEXICON` / length. `opencode-bunker-laya` v5 fixed the short
+  dev-prompt flood and the PII formats; v6 fixed the v5 harmful-recall and
+  bare-secret regressions (gates pass). **But the gate stays on by default**:
+  the injection head still over-fires on benign account/UI text ("The password
+  field is required." → 0.98) even with those exact strings trained as
+  negatives. Measured: the gate downgrades those to `flag` with **zero** real
+  attacks downgraded (65/65 still block), so `coverage.gateModelInjection`
+  remains `true`. Other findings: `dtype: "q8"` is unusable — dynamic INT8
+  collapses the decision head (max|Δ|=0.99); **fp16 is lossless** (max|Δ|=0.0000,
+  846 MB) and is the artifact for 8 GB hosts; on 8 GB hosts fp32 alongside an
+  active TUI can be jetsam-killed at ~1.26 GB RSS; `audit.jsonl` records
+  `provider` so fail-open fallbacks are distinguishable. `HARMFUL_PATTERNS`
+  remains as a deterministic backstop for the catastrophic categories.
 
 ## Resume instructions
 
